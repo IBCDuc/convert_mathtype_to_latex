@@ -621,18 +621,20 @@ def _build_question_json(stem_first: list[Block], stem_rest_text: str, body: lis
     math_dict = math_dict or {}
 
     head_inlines = _trim_question_prefix(stem_first[0]) if stem_first else []
-    head_text = _render_para_text(head_inlines, assets, q_order=order) if head_inlines else ""
-    stem_text = _render_text(stem_paras, assets, q_order=order) or ""
-    content_html = "\n\n".join(x for x in [head_text, stem_text] if x)
-
+    head_html = f"<p>{_render_para(head_inlines, assets, math_dict)}</p>" if head_inlines else ""
+    stem_html = _render(stem_paras, assets, math_dict) or ""
+    content_html = "\n".join(x for x in [head_html, stem_html] if x)
 
     choices = _split_choices(opt_paras) if opt_start is not None else []
     choices_list = None
     if choices:
         choices_list = []
         for i, c in enumerate(choices):
-            c_content = _render_para_text(c.items, assets, q_order=order).strip()
-            choices_list.append({"id": i + 1, "content": c_content})
+            c_html = _render_para(c.items, assets, math_dict).strip()
+            if c_html:
+                c_html = f"<p>{c_html}</p>"
+            choices_list.append({"id": i + 1, "content": c_html})
+
 
 
     letter, ans_source, explanation_html = None, "none", ""
