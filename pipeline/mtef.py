@@ -754,6 +754,10 @@ def _tidy(s: str) -> str:
 
     # Fix \end{array\} -> \end{array}
     s = re.sub(r'\\end\{array\\?\}', r'\\end{array}', s)
+    # Fix align -> aligned (KaTeX only allows align in display mode)
+    s = re.sub(r'\\begin\{align\*?\}', r'\\begin{aligned}', s)
+    s = re.sub(r'\\end\{align\*?\}', r'\\end{aligned}', s)
+
 
     # Fix \( inside math mode -> ( while preserving \\ ( line breaks
     s = re.sub(r'\\\\+\(', r'\\\\ (', s)
