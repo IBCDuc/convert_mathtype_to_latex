@@ -1,0 +1,554 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unilearn.vn/schema/lesson.v1.json",
+  "title": "UniLearn lesson (theory) v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "doc_id",
+    "content_hash",
+    "meta",
+    "source",
+    "stats",
+    "quality",
+    "sections",
+    "assets"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\.\\d+\\.\\d+$"
+    },
+    "doc_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "meta": {
+      "type": "object",
+      "required": [
+        "subject",
+        "grade",
+        "book",
+        "curriculum",
+        "lesson",
+        "part",
+        "language"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "subject": {
+          "type": "object",
+          "required": [
+            "code",
+            "name"
+          ],
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "grade": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "book": {
+          "type": "object",
+          "required": [
+            "name",
+            "code",
+            "confidence"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "code": {
+              "type": "string"
+            },
+            "confidence": {
+              "enum": [
+                "default",
+                "detected",
+                "manual"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "curriculum": {
+          "type": "string"
+        },
+        "lesson": {
+          "type": "object",
+          "required": [
+            "number",
+            "code",
+            "title",
+            "chapter"
+          ],
+          "properties": {
+            "number": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "chapter": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "properties": {
+                "number": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "part": {
+          "enum": [
+            "THEORY",
+            "EXERCISE"
+          ]
+        },
+        "language": {
+          "type": "string"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "file_name",
+        "file_sha256",
+        "relative_path",
+        "paragraph_range",
+        "extracted_at",
+        "pipeline_version",
+        "asset_mode",
+        "theory_heading"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "file_name": {
+          "type": "string"
+        },
+        "file_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "relative_path": {
+          "type": "string"
+        },
+        "paragraph_range": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "extracted_at": {
+          "type": "string"
+        },
+        "pipeline_version": {
+          "type": "string"
+        },
+        "asset_mode": {
+          "enum": [
+            "inline",
+            "reference"
+          ]
+        },
+        "theory_heading": {
+          "type": "string"
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "required": [
+        "sections",
+        "blocks",
+        "words",
+        "figures",
+        "tables",
+        "formulas"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "sections": {
+          "type": "integer"
+        },
+        "blocks": {
+          "type": "integer"
+        },
+        "words": {
+          "type": "integer"
+        },
+        "figures": {
+          "type": "integer"
+        },
+        "tables": {
+          "type": "integer"
+        },
+        "formulas": {
+          "type": "object",
+          "required": [
+            "total",
+            "resolved_latex",
+            "fallback_image"
+          ],
+          "properties": {
+            "total": {
+              "type": "integer"
+            },
+            "resolved_latex": {
+              "type": "integer"
+            },
+            "fallback_image": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "required": [
+        "status",
+        "score",
+        "flags"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "PASS",
+            "WARN",
+            "FAIL"
+          ]
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "assets": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/asset"
+      }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": [
+        "node_id",
+        "level",
+        "order",
+        "path",
+        "numbering",
+        "title",
+        "title_html",
+        "kind",
+        "src",
+        "blocks",
+        "children"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "order": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)*$"
+        },
+        "numbering": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "title_html": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "concept",
+            "definition",
+            "theorem",
+            "property",
+            "note",
+            "example",
+            "remark",
+            "summary"
+          ]
+        },
+        "src": {
+          "type": "object"
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/block"
+          }
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        }
+      }
+    },
+    "block": {
+      "type": "object",
+      "required": [
+        "block_id",
+        "order",
+        "src",
+        "type"
+      ],
+      "properties": {
+        "block_id": {
+          "type": "string"
+        },
+        "order": {
+          "type": "integer"
+        },
+        "src": {
+          "type": "object"
+        },
+        "type": {
+          "enum": [
+            "paragraph",
+            "list",
+            "formula",
+            "figure",
+            "table",
+            "quote",
+            "callout"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "html": {
+          "type": "string"
+        },
+        "inlines": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/inline"
+          }
+        },
+        "marks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "list_level": {
+          "type": "integer"
+        },
+        "latex": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        },
+        "display": {
+          "enum": [
+            "inline",
+            "block"
+          ]
+        },
+        "asset_id": {
+          "type": "string"
+        },
+        "caption": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "alt": {
+          "type": "string"
+        },
+        "placement": {
+          "enum": [
+            "block",
+            "float-right",
+            "float-left"
+          ]
+        },
+        "has_header": {
+          "type": "boolean"
+        },
+        "rows": {
+          "type": "array"
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attribution": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "variant": {
+          "enum": [
+            "note",
+            "remark",
+            "example",
+            "warning"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "blocks": {
+          "type": "array"
+        }
+      }
+    },
+    "inline": {
+      "type": "object",
+      "required": [
+        "t"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "t": {
+          "enum": [
+            "text",
+            "formula",
+            "image"
+          ]
+        },
+        "v": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        }
+      }
+    },
+    "asset": {
+      "type": "object",
+      "required": [
+        "kind",
+        "sha256"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "formula",
+            "figure"
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "source": {
+          "enum": [
+            "tex",
+            "mtef",
+            "omml",
+            "unresolved"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "latex": {
+          "type": "string"
+        },
+        "mathml": {
+          "type": "string"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "integer"
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        },
+        "data": {
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "fallback": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

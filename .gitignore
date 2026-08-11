@@ -1,0 +1,40 @@
+# Byte-compiled / Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Node / JS dependencies
+node_modules/
+package-lock.json
+
+# Environment & Config
+.env
+*.log
+
+# Zip packages and binary deliverables
+*.zip
+
+# Scratch test scripts
+scratch_*.py
+
+# Output directories & input textbook data
+bin/
+Kiến thức trọng tâm và tài tập/
+
+out/
+out-*/
+out_*/
+math10_bai2_json/
+baitap_ref/
+baitaptoantoinay/
+toan-debug/
+toan-debug-bt/
+test_mathtype_to_mathml/
+test_metaphor/
+test_mtef_go/
+test_vml/
+imgtet.html
+conv.log
+MTEF-py/
+pandoc/

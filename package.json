@@ -1,0 +1,15 @@
+{
+  "dependencies": {
+    "katex": "^0.18.1"
+  },
+  "name": "uni_convert",
+  "version": "1.0.0",
+  "description": "> Bản kế hoạch v1.0 — mục tiêu: chốt **schema JSON output chuẩn** + **kiến trúc pipeline** trước khi code. > Phạm vi v1: **chỉ trích xuất phần Lý thuyết / Kiến thức trọng tâm**. Phần Bài tập để v2 (schema đã chừa chỗ).",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
