@@ -720,12 +720,14 @@ def _join_tokens(parts: list[str]) -> str:
 
 _SLOTS = {
     TM_PAREN: 1, TM_BRACE: 1, TM_BRACK: 1, TM_ANGLE: 1, TM_BAR: 1, TM_DBAR: 1,
-    TM_FLOOR: 1, TM_CEILING: 1,
+    TM_FLOOR: 1, TM_CEILING: 1, TM_OBAR: 1, 14: 1, 31: 1, 13: 1, 37: 1, 33: 1,
+    TM_INTERVAL: 3, 9: 3,
     TM_ROOT: 2, TM_FRACT: 2, TM_SCRIPT: 3, TM_SUB: 1, TM_SUP: 1, TM_SUBSUP: 2,
     TM_LDIV: 2, TM_SUM: 3, TM_SUMOP: 3, TM_PROD: 3, TM_COPROD: 3,
     TM_INTEG: 3, TM_INTOP: 3, TM_UNION: 3, TM_INTER: 3, TM_LIM: 1,
     TM_HBRACE: 2, TM_HBRACK: 2,
 }
+
 
 
 def _sub(s: str) -> str:
