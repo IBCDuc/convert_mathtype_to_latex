@@ -158,46 +158,37 @@ RE_MATH_EXPR = re.compile(
 )
 
 
+RE_VIETNAMESE = re.compile(
+    r'[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ'
+    r'ÀÁẢÃẠĂẮẰẲẴẶÂẤẦẨẪẬÈÉẺẼẸÊẾỀỂỄỆÌÍỈĨỊÒÓỎÕỌÔỐỒỔỖỘƠỚỜỞỠỢÙÚỦŨỤƯỨỪỬỮỰỲÝỶỸỴĐ]',
+    re.IGNORECASE
+)
+
+
 def _format_inline_text(text: str) -> str:
     text_strip = text.strip()
     if not text_strip or text_strip.startswith("[MATH:") or text_strip.startswith("[IMAGE:"):
         return text
 
+    # HARD GATE: If text contains ANY Vietnamese accented letters, NEVER promote to math mode!
+    if RE_VIETNAMESE.search(text_strip):
+        return text
+
+    # Must contain LaTeX syntax or math operators to be promoted
     has_latex = bool(re.search(r'(\\[a-zA-Z]+|\{.*?\}|[A-Z]\s*=\s*[\{\[\(]|[\=\<\>≤≥±≠∈∉⊂⊃∪∩])', text_strip))
     if not has_latex:
         return text
 
-    is_pure_math = not bool(re.search(r'\b(Cho|Liệt|Khi|Tập|Xác|Trong|khẳng|định|sau|đây|đúng|rỗng|phần|tử|hợp|có)\b', text_strip, re.IGNORECASE))
-
-    if is_pure_math:
-        m = re.match(r'^(.*?)([.,;]*)$', text_strip)
-        if m:
-            math_part = m.group(1).strip()
-            punct_part = m.group(2)
-            if math_part:
-                tidied = mtef._tidy(math_part)
-                return f"[MATH: {tidied}]{punct_part}"
-
-    m_start = re.search(r'([A-Z]\s*=|\{|\\left|\\begin|\\mathbb|\\[a-zA-Z]+)', text_strip)
-    if m_start:
-        start_idx = m_start.start()
-        prefix = text_strip[:start_idx]
-        rest = text_strip[start_idx:]
-        
-        last_brace = max(rest.rfind('}'), rest.rfind(']'))
-        if last_brace != -1:
-            math_part = rest[:last_brace + 1]
-            suffix = rest[last_brace + 1:]
-        else:
-            m_end = re.match(r'^(.*?)([.,;:?\s]*)$', rest)
-            math_part = m_end.group(1) if m_end else rest
-            suffix = m_end.group(2) if m_end else ""
-
+    m = re.match(r'^(.*?)([.,;]*)$', text_strip)
+    if m:
+        math_part = m.group(1).strip()
+        punct_part = m.group(2)
         if math_part:
-            tidied_math = mtef._tidy(math_part)
-            return f"{prefix}[MATH: {tidied_math}]{suffix}"
+            tidied = mtef._tidy(math_part)
+            return f"[MATH: {tidied}]{punct_part}"
 
     return text
+
 
 
 def _render_para_text(inlines: list[Inline], assets, q_order: int = 1, img_collector: dict | None = None) -> str:
