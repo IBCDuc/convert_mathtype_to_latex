@@ -8,12 +8,16 @@ Mọi thất bại đều trả về None để caller fallback sang ảnh WMF/P
 """
 from __future__ import annotations
 
+import hashlib
 import io
+import json
+import pathlib
 import re
 import struct
 from dataclasses import dataclass, field
 
 import olefile
+
 
 # ---------------------------------------------------------------- record tags
 END, LINE, CHAR, TMPL, PILE, MATRIX = 0, 1, 2, 3, 4, 5
@@ -1333,7 +1337,29 @@ def decode_stream(data: bytes) -> tuple[str | None, str]:
     return _tidy(latex), source
 
 
+_OVERRIDES_CACHE = None
+
+def _load_overrides():
+    global _OVERRIDES_CACHE
+    if _OVERRIDES_CACHE is None:
+        p = pathlib.Path(__file__).parent / "overrides.json"
+        if p.exists():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    _OVERRIDES_CACHE = json.load(f)
+            except Exception:
+                _OVERRIDES_CACHE = {}
+        else:
+            _OVERRIDES_CACHE = {}
+    return _OVERRIDES_CACHE
+
+
 def decode_ole(blob: bytes) -> tuple[str | None, str]:
+    if blob:
+        h = hashlib.sha1(blob).hexdigest()
+        overrides = _load_overrides()
+        if h in overrides:
+            return overrides[h].get("latex"), "override"
     try:
         if not olefile.isOleFile(io.BytesIO(blob)):
             return None, "unresolved"
@@ -1343,3 +1369,4 @@ def decode_ole(blob: bytes) -> tuple[str | None, str]:
         return decode_stream(ole.openstream("Equation Native").read())
     except Exception:
         return None, "unresolved"
+
