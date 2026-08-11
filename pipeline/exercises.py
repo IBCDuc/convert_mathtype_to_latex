@@ -26,8 +26,9 @@ from dataclasses import dataclass, field
 from html import escape as _esc
 from pathlib import Path
 
-from . import mathrender
+from . import mathrender, mtef
 from .docxast import Asset, Block, DocxReader, Inline
+
 from .segment import find_theory, fold
 
 SUBJECTS = {
@@ -116,13 +117,28 @@ def _render_para(inlines: list[Inline], assets, math: dict[str, str]) -> str:
     parts: list[tuple[str, str | None, str]] = []
     for i in inlines:
         if i.kind == "text":
-            parts.append(("text", i.text, _esc(i.text)))
+            formatted = _format_inline_text(i.text)
+            def _math_sub(match):
+                raw_tex = match.group(1).strip()
+                return math.get(raw_tex) or math.get(mtef._tidy(raw_tex)) or f"[MATH: {raw_tex}]"
+            html_text = re.sub(r'\[MATH:\s*(.*?)\]', _math_sub, _esc(formatted))
+            parts.append(("text", i.text, html_text))
         elif i.kind == "formula":
             a = assets.get(i.ref)
-            html = math[a.latex] if a and a.latex else _b64img(a)
-            parts.append(("formula", None, html))
+            if a:
+                raw_latex = a.latex.strip() if (a.latex and a.latex.strip()) else ""
+                latex = mtef._tidy(raw_latex) if raw_latex else ""
+                html = None
+                if latex:
+                    html = math.get(latex) or math.get(raw_latex) or f"[MATH: {latex}]"
+                elif a.data:
+                    html = _b64img(a)
+                if html:
+                    parts.append(("formula", None, html))
         elif i.kind == "image":
-            parts.append(("image", None, _b64img(assets.get(i.ref))))
+            img_html = _b64img(assets.get(i.ref))
+            if img_html:
+                parts.append(("image", None, img_html))
 
     out = []
     for idx, part in enumerate(parts):
@@ -130,6 +146,8 @@ def _render_para(inlines: list[Inline], assets, math: dict[str, str]) -> str:
             out.append(" ")
         out.append(part[2])
     return re.sub(r"[ \t]+", " ", "".join(out)).strip()
+
+
 
 
 def _render(paras: list[Block], assets, math: dict[str, str], depth: int = 0) -> str | None:
@@ -165,29 +183,47 @@ RE_VIETNAMESE = re.compile(
 )
 
 
+RE_INLINE_MATH = re.compile(
+    r'('
+    r'\\[a-zA-Z]+\{[^\}]*\}|'                    # Macro with brace arg like \mathbb{R}
+    r'\\[a-zA-Z]+|'                             # LaTeX macro like \cap, \in, \alpha
+    r'[A-Z]\s*=\s*[\{\[\(][^\}\]\)]*[\}\]\)]|'  # Set notation like A={a;b;c;d}
+    r'\{[^\}]+\}|'                              # Brace content like {1; 2; 3}
+    r'\b[a-zA-Z]\s*[\=\<\>≤≥±≠∈∉⊂⊃∪∩]\s*[^,;.\s]+' # Equations/inequalities like x \in A
+    r')'
+)
+
+
+
 def _format_inline_text(text: str) -> str:
     text_strip = text.strip()
     if not text_strip or text_strip.startswith("[MATH:") or text_strip.startswith("[IMAGE:"):
         return text
 
-    # HARD GATE: If text contains ANY Vietnamese accented letters, NEVER promote to math mode!
-    if RE_VIETNAMESE.search(text_strip):
+    # If pure math (no Vietnamese), format entire string as math
+    if not RE_VIETNAMESE.search(text_strip):
+        has_latex = bool(re.search(r'(\\[a-zA-Z]+|\{.*?\}|[A-Z]\s*=\s*[\{\[\(]|[\=\<\>≤≥±≠∈∉⊂⊃∪∩])', text_strip))
+        if has_latex:
+            m = re.match(r'^(.*?)([.,;]*)$', text_strip)
+            if m:
+                math_part = m.group(1).strip()
+                punct_part = m.group(2)
+                if math_part:
+                    tidied = mtef._tidy(math_part)
+                    return f"[MATH: {tidied}]{punct_part}"
         return text
 
-    # Must contain LaTeX syntax or math operators to be promoted
-    has_latex = bool(re.search(r'(\\[a-zA-Z]+|\{.*?\}|[A-Z]\s*=\s*[\{\[\(]|[\=\<\>≤≥±≠∈∉⊂⊃∪∩])', text_strip))
-    if not has_latex:
-        return text
+    # If mixed Vietnamese + inline math expressions, extract and format embedded math expressions
+    def _sub_math(match: re.Match) -> str:
+        raw_m = match.group(0).strip()
+        if not raw_m:
+            return match.group(0)
+        tidied_m = mtef._tidy(raw_m)
+        return f"[MATH: {tidied_m}]"
 
-    m = re.match(r'^(.*?)([.,;]*)$', text_strip)
-    if m:
-        math_part = m.group(1).strip()
-        punct_part = m.group(2)
-        if math_part:
-            tidied = mtef._tidy(math_part)
-            return f"[MATH: {tidied}]{punct_part}"
+    formatted = RE_INLINE_MATH.sub(_sub_math, text)
+    return formatted
 
-    return text
 
 
 
@@ -204,11 +240,13 @@ def _render_para_text(inlines: list[Inline], assets, q_order: int = 1, img_colle
             if latex:
                 math_str = _wrap_math(latex)
 
-            elif a and a.data and img_collector is not None:
+            elif a and a.data:
                 ext = ".png" if "png" in (a.mime or "") else ".wmf"
                 img_name = f"assets/q{q_order:03d}_f{a.aid}{ext}"
-                img_collector[img_name] = a.data
+                if img_collector is not None:
+                    img_collector[img_name] = a.data
                 math_str = f"[IMAGE: {img_name}]"
+
             else:
                 math_str = ""
             if math_str:
@@ -582,21 +620,20 @@ def _build_question_json(stem_first: list[Block], stem_rest_text: str, body: lis
 
     math_dict = math_dict or {}
 
-    head_blocks = stem_first if stem_first else []
-    full_stem_blocks = head_blocks + stem_paras
-    content_html = _render(full_stem_blocks, assets, math_dict) or ""
+    head_inlines = _trim_question_prefix(stem_first[0]) if stem_first else []
+    head_text = _render_para_text(head_inlines, assets, q_order=order) if head_inlines else ""
+    stem_text = _render_text(stem_paras, assets, q_order=order) or ""
+    content_html = "\n\n".join(x for x in [head_text, stem_text] if x)
+
 
     choices = _split_choices(opt_paras) if opt_start is not None else []
     choices_list = None
     if choices:
         choices_list = []
         for i, c in enumerate(choices):
-            c_html = _render_para(c.items, assets, math_dict).strip()
-            if not c_html or re.match(r"^[.,\s]+$", c_html):
-                c_html = ""
-            if c_html:
-                c_html = f"<p>{c_html}</p>"
-            choices_list.append({"id": i + 1, "content": c_html})
+            c_content = _render_para_text(c.items, assets, q_order=order).strip()
+            choices_list.append({"id": i + 1, "content": c_content})
+
 
     letter, ans_source, explanation_html = None, "none", ""
     if tail_paras:
@@ -661,8 +698,9 @@ def _build_question_json(stem_first: list[Block], stem_rest_text: str, body: lis
         answer_val = tf_ans
 
     elif not choices_list:
-        plain_stem = "".join(b.text for b in full_stem_blocks)
+        plain_stem = content_html
         if "___" in plain_stem or "[___]" in plain_stem or "[...]" in plain_stem:
+
             q_type = "fill-answer"
             choices_list = None
             fill_match_mode = "case_insensitive"
@@ -746,7 +784,15 @@ def convert_json(path: str | Path) -> tuple[list[dict], list[dict]]:
         return [], []
 
     latex_list = [a.latex for a in doc.assets.values() if a and a.latex]
+    for b in doc.blocks:
+        for inl in b.inlines:
+            if inl.kind == "text":
+                formatted = _format_inline_text(inl.text)
+                for m in re.finditer(r'\[MATH:\s*(.*?)\]', formatted):
+                    latex_list.append(m.group(1))
+
     math_dict = mathrender.render_many(latex_list) if latex_list else {}
+
 
     body = doc.blocks[t_end + 1:]
     questions: list[dict] = []

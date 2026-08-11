@@ -135,6 +135,29 @@ class Ctx:
 _ROW_SEP = "\x00PILE_ROW\x00"   # sentinel nội bộ, không bao giờ lọt ra ngoài LaTeX thật
 
 
+def _join_tokens(parts: list[str]) -> str:
+    """Join token parts cleanly without putting spaces between CHAR tokens like 'c' 'o' 's' -> 'cos' or '1' '8' '0' -> '180'.
+    Only insert spaces when a control word ending in a letter (e.g. \\alpha) precedes an alphanumeric character.
+    """
+    if not parts:
+        return ""
+    result = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        if not result:
+            result.append(p)
+            continue
+        prev = result[-1]
+        if prev and prev.startswith('\\') and prev[-1].isalpha() and not prev.endswith('}') and p and (p[0].isalnum() or p[0] == '\\'):
+            result.append(" " + p)
+        else:
+            result.append(p)
+    return "".join(result).strip()
+
+
+
 class MTEFParser:
     def __init__(self, data: bytes):
         self.d = data
@@ -524,95 +547,9 @@ class MTEFParser:
             return ""
         return ch
 
-def _join_tokens(parts: list[str]) -> str:
-    """Join token parts cleanly without putting spaces between CHAR tokens like 'c' 'o' 's' -> 'cos' or '1' '8' '0' -> '180'.
-    Only insert spaces when a control word ending in a letter (e.g. \\alpha) precedes an alphanumeric character.
-    """
-    if not parts:
-        return ""
-    result = []
-    for p in parts:
-        p = p.strip()
-        if not p:
-            continue
-        if not result:
-            result.append(p)
-            continue
-        prev = result[-1]
-        if prev and prev.startswith('\\') and prev[-1].isalpha() and not prev.endswith('}') and p and (p[0].isalnum() or p[0] == '\\'):
-            result.append(" " + p)
-        else:
-            result.append(p)
-    return "".join(result).strip()
-
-
-    def parse_single_slot(self, depth: int = 0) -> str:
-
-
-        """Quy tắc chuẩn MTEF v5 Spec cho slot:
-        - Đọc liên tục các record (LINE, CHAR, TMPL) thuộc slot cho đến khi gặp record END (rec == 0) tương ứng của slot đó.
-        - Bỏ qua các LINE record rỗng ở đầu slot.
-        """
-        if depth > 24:
-            raise Trunc
-        res_parts: list[str] = []
-        while True:
-            if self.i >= len(self.d):
-                break
-            tag = self.u8()
-            if tag >= 16:
-                if tag == COLOR_DEF:
-                    self.i += 8
-                    continue
-                if tag == FONT_DEF:
-                    self.u8()
-                    self.cstr()
-                    continue
-                if tag == ENCODING_DEF:
-                    self.cstr()
-                    continue
-                if tag == EQN_PREFS:
-                    self.u8()
-                    self.nibble_values(self.u8())
-                    self.nibble_values(self.u8())
-                    self.i += self.u8() * 2
-                    continue
-                if tag >= 100:
-                    self.i += self.u8()
-                    continue
-                raise Trunc
-            rec, opt = tag & 0x0F, tag & 0xF0
-            if rec == END:
-                break
-            elif rec in (FULL, SUB, SUB2, SYM, SUBSYM):
-                continue
-            elif rec == COLOR:
-                self.u8()
-            elif rec == FONT_STYLE_DEF:
-                self.u8()
-                self.u8()
-            elif rec == RULER:
-                self.skip_ruler()
-            elif rec == LINE:
-                if opt & xfNULL:
-                    continue
-                if opt & xfLSPACE:
-                    self.u8()
-                if opt & xfRULER:
-                    self.skip_ruler()
-                p = self.parse_slot(depth + 1)
-                if p:
-                    res_parts.append(p)
-            elif rec == CHAR:
-                res_parts.append(self.parse_char())
-            elif rec == TMPL:
-                res_parts.append(self.parse_tmpl(depth, opt))
-            else:
-                break
-        return _join_tokens(res_parts)
-
-
     def parse_tmpl(self, depth: int, tag_opt: int = 0) -> str:
+
+
         """TMPL = [tag][options][selector][variation:u16] rồi tới các ô con."""
         if tag_opt & xfNUDGE:
             self.i += 2
@@ -630,8 +567,9 @@ def _join_tokens(parts: list[str]) -> str:
                     break
                 self._tmpl_nest += 1
                 try:
-                    slots.append(self.parse_single_slot(depth + 1))
+                    slots.append(self.parse_slot(depth + 1))
                 finally:
+
                     self._tmpl_nest -= 1
         finally:
             if sel in FENCES or sel in (TM_OBRACK, TM_INTERVAL):

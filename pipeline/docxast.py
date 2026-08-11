@@ -187,15 +187,34 @@ class DocxReader:
         return _merge_text(out)
 
     def _ole(self, el) -> Inline:
-        """<w:object> = công thức MathType. Đi trực tiếp LaTeX (không lấy ảnh preview)."""
+        """<w:object> = công thức MathType. Đi trực tiếp LaTeX. Nếu unresolved, lấy ảnh preview fallback."""
         obj = el.find(f".//{{{NS['o']}}}OLEObject")
         latex, source = None, "unresolved"
         if obj is not None:
             blob = self._part(obj.get(f"{{{NS['r']}}}id"))
             if blob:
                 latex, source = mtef.decode_ole(blob)
+
+        # Fallback image preview if formula is unresolved
+        data, mime = b"", ""
+        if not latex:
+            img_data = el.find(f".//{{{NS['v']}}}imagedata")
+            blip = el.find(f".//{{{NS['a']}}}blip")
+            img_rid = None
+            if img_data is not None:
+                img_rid = img_data.get(f"{{{NS['r']}}}id") or img_data.get("id")
+            elif blip is not None:
+                img_rid = blip.get(f"{{{NS['r']}}}embed")
+
+            if img_rid:
+                raw_img = self._part(img_rid)
+                if raw_img:
+                    target = self.rels.get(img_rid, "")
+                    data, mime = _to_png(raw_img, target)
+
         return Inline("formula", ref=self._add(
-            "formula", data=b"", mime="", latex=latex, source=source))
+            "formula", data=data, mime=mime, latex=latex, source=source))
+
 
 
     def _figure(self, rid: str | None) -> str | None:
@@ -276,35 +295,10 @@ _PNG_CACHE: dict[str, tuple[bytes, str]] = {}
 def _to_png(raw: bytes, target: str) -> tuple[bytes, str]:
     ext = Path(target).suffix.lower()
     if ext in (".wmf", ".emf", ".wdp"):
-        key = hashlib.sha256(raw).hexdigest()
-        if key in _PNG_CACHE:
-            return _PNG_CACHE[key]
-        # Thử 1: dùng ImageMagick convert
-        try:
-            with tempfile.TemporaryDirectory() as d:
-                src, dst = Path(d) / f"a{ext}", Path(d) / "a.png"
-                src.write_bytes(raw)
-                subprocess.run(["convert", "-density", "150", str(src), str(dst)],
-                               check=True, capture_output=True, timeout=30)
-                if dst.exists() and dst.stat().st_size:
-                    _PNG_CACHE[key] = (dst.read_bytes(), "image/png")
-                    return _PNG_CACHE[key]
-        except Exception:
-            pass
+        mime = "image/x-wmf" if ext == ".wmf" else ("image/x-emf" if ext == ".emf" else "image/png")
+        return raw, mime
 
-        # Thử 2: dùng LibreOffice headless nếu ImageMagick không đọc được EMF
-        try:
-            with tempfile.TemporaryDirectory() as d:
-                src = Path(d) / f"a{ext}"
-                src.write_bytes(raw)
-                subprocess.run(["libreoffice", "--headless", "--convert-to", "png", str(src), "--outdir", str(d)],
-                               check=True, capture_output=True, timeout=30)
-                dst = Path(d) / "a.png"
-                if dst.exists() and dst.stat().st_size:
-                    _PNG_CACHE[key] = (dst.read_bytes(), "image/png")
-                    return _PNG_CACHE[key]
-        except Exception:
-            pass
+
 
         # Ép mime sang image/png để tránh lọt image/emf hay image/wmf lên HTML/JSON
         _PNG_CACHE[key] = (raw, "image/png")
