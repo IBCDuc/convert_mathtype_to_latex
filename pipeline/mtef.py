@@ -520,7 +520,31 @@ class MTEFParser:
             return ""
         return ch
 
+def _join_tokens(parts: list[str]) -> str:
+    """Join token parts cleanly without putting spaces between CHAR tokens like 'c' 'o' 's' -> 'cos' or '1' '8' '0' -> '180'.
+    Only insert spaces when a control word ending in a letter (e.g. \\alpha) precedes an alphanumeric character.
+    """
+    if not parts:
+        return ""
+    result = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        if not result:
+            result.append(p)
+            continue
+        prev = result[-1]
+        if prev and prev.startswith('\\') and prev[-1].isalpha() and not prev.endswith('}') and p and (p[0].isalnum() or p[0] == '\\'):
+            result.append(" " + p)
+        else:
+            result.append(p)
+    return "".join(result).strip()
+
+
     def parse_single_slot(self, depth: int = 0) -> str:
+
+
         """Quy tắc chuẩn MTEF v5 Spec cho slot:
         - Đọc liên tục các record (LINE, CHAR, TMPL) thuộc slot cho đến khi gặp record END (rec == 0) tương ứng của slot đó.
         - Bỏ qua các LINE record rỗng ở đầu slot.
@@ -581,7 +605,8 @@ class MTEFParser:
                 res_parts.append(self.parse_tmpl(depth, opt))
             else:
                 break
-        return " ".join(res_parts).strip()
+        return _join_tokens(res_parts)
+
 
     def parse_tmpl(self, depth: int, tag_opt: int = 0) -> str:
         """TMPL = [tag][options][selector][variation:u16] rồi tới các ô con."""
