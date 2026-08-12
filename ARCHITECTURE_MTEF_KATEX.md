@@ -599,13 +599,61 @@ Số mũ lồng số mũ 4–5 tầng: ý định tác giả **không còn suy d
 
 Còn **1 ca** vi phạm bất biến `\sqrt` đối số rỗng lọt qua thay đổi #3, nằm trong một công thức đã hỏng nhiều lớp.
 
-### 8.5 Chưa làm (theo lộ trình §5)
+### 8.5 Cổng bất biến — bắt lỗi im lặng
 
-- **Bước 5 — RC4**, luồng typed span. Chưa động tới `_format_inline_text` và danh sách stopword. Đây là việc lớn nhất còn lại và là gốc của lỗi "tiếng Việt trong math mode".
-- **Bước 4 — bất biến RC2**, chưa bỏ `_SLOTS.get(sel, 1)`. `stray_pipe` vẫn còn **56** ca và `right_dot_brace` còn **40** ca (hai lớp này không gây lỗi cứng KaTeX nhưng hiển thị sai).
-- **Bước 6 — parser S2/S3**. Chưa cần: ba thay đổi ở trên đã lấy 89% lợi ích mà không cần viết parser.
-- **RC1** (space-join `c o s`, `1 8 0`) — chưa sửa. Không gây lỗi đỏ nhưng là lỗi *im lặng*, nên vẫn nên làm.
-- **Cổng 2 (không-thoái-triển)** chưa thành test thường trú; hiện tôi chạy thủ công cho từng thay đổi.
+Sau khi cú pháp sạch 99,85%, **mọi lỗi còn lại đều im lặng**: KaTeX render thành công nhưng ra công thức sai. Cổng KaTeX hết việc, nên cần cổng thứ hai đếm bất biến và chốt theo kiểu **ratchet — số ca không được phép tăng**.
+
+[`tools/check_invariants.py`](tools/check_invariants.py) chạy pipeline thật và soi mọi LaTeX đi vào KaTeX (bao trùm **cả hai** đường: công thức MTEF và toán suy từ Text Run):
+
+```bash
+python tools/check_invariants.py "Kiến thức trọng tâm và tài tập"
+python tools/check_invariants.py <dir> --show empty_macro_arg   # xem chi tiết
+python tools/check_invariants.py <dir> --update-baseline
+```
+
+Baseline hiện tại — 43 file `.docx`, 2.862 công thức duy nhất:
+
+| Bất biến | Ca | Ghi chú |
+|---|---:|---|
+| `viet_outside_text` | 13 | RC4 — **nhỏ hơn dự kiến rất nhiều** |
+| `spaced_function_name` | **0** | RC1 không còn biểu hiện ở đầu vào KaTeX |
+| `spaced_digits` | **0** | ditto |
+| `stray_pipe` | 9 | RC2 — `\{\|x ...` |
+| `spurious_pipe_style` | 33 | chỉ là trình bày, không phải lỗi |
+| `right_dot_brace` | 38 | RC3 — lớp lớn nhất còn lại |
+| `empty_macro_arg` | 1 | 23 → 1 sau khi sửa `TM_OBAR` |
+| `brace_imbalance` | **0** | bắt buộc bằng 0 |
+| `pua_chars` | **0** | bắt buộc bằng 0 |
+
+### 8.6 Ba đính chính từ phép đo này
+
+**1. `stray_pipe` bị tôi phóng đại.** Bản đầu của bộ đo đếm **mọi** dấu `|`, báo 50–56 ca. Nhưng `A=\{x\in\mathbb{N} |x<20\}` là ký hiệu **set-builder hợp lệ** — KaTeX render bình thường, chỉ nên đổi sang `\mid` cho giãn cách đẹp. Lỗi thật chỉ là dấu `|` **dính ngay ngoặc tập hợp**: **9 ca**, không phải 56.
+
+> Một bộ đo sai còn tệ hơn không đo: nó tạo ra việc không tồn tại và che mất việc thật. Chính vì đếm quá rộng mà `\overline{}` (23 ca, lỗi thật) bị lọt. Nay mỗi bất biến có test dương + test âm trong [`tests/test_invariants.py`](tests/test_invariants.py).
+
+**2. RC1 không còn biểu hiện ở đầu vào KaTeX.** Đo raw sau decoder có 136 ca `c o s`, nhưng tới lúc vào KaTeX thì `_tidy._FUNC_RE` cộng `mathrender._wrap_bare_words` đã xử lý hết: tên hàm **0 ca**, chữ số **0 ca**. RC1 vì thế **tụt ưu tiên** — vẫn nên sửa tại decoder cho gọn kiến trúc, nhưng không còn là lỗi đang gây hại.
+
+**3. RC4 nhỏ hơn dự kiến — vì bạn đã sửa.** Bạn thay danh sách 14 stopword bằng `RE_VIETNAMESE` làm **chặn cứng** và xoá nhánh đoán biên bằng `rfind('}')`. Còn **13 ca**, không phải một lớp lỗi lớn. Việc còn thiếu duy nhất là **điều kiện 3**: xác nhận bằng KaTeX trước khi promote.
+
+### 8.7 Sửa thêm: `TM_OBAR` rỗng
+
+`empty_macro_arg` 23 ca đều là `\overline{}` — gạch trên lơ lửng không nội dung, sinh từ selector `14` (`TM_OBAR`), đúng selector chưa khai báo fire nhiều nhất (52 lần). Các template trang trí một ô (`TM_OBAR`, `TM_UBAR`, `TM_VEC`, `TM_TILDE`, `TM_HAT`) nay trả về chuỗi rỗng khi ô rỗng, thay vì sinh macro rỗng. **23 → 1.**
+
+### 8.8 Chưa làm (theo lộ trình §5)
+
+Xếp lại theo số đo mới, **không** theo phỏng đoán ban đầu:
+
+| Ưu tiên | Việc | Số ca | Ghi chú |
+|---|---|---:|---|
+| **1** | `right_dot_brace` — RC3 | **38** | Lớp lớn nhất còn lại. Cần khớp `\left`/`\right` ở tầng cây (§3.3) |
+| **2** | RC4 điều kiện 3 — validate bằng KaTeX trước khi promote | 13 | Biến promotion từ *đoán* thành *tự kiểm chứng* |
+| **3** | RC2 — bỏ `_SLOTS.get(sel, 1)`, thêm bất biến đếm `END` | 9 | `stray_pipe`; điều tra selector `37`, `33` |
+| **4** | `overrides.json` cho 7 ca KaTeX còn lại | 7 | Không viết thêm heuristic |
+| **5** | `spurious_pipe_style` → `\mid` | 33 | Chỉ là trình bày |
+| ~~RC1~~ | space-join ở decoder | **0** | **Hạ ưu tiên** — không còn biểu hiện (§8.6) |
+| ~~S2/S3~~ | parser LaTeX | — | **Chưa cần** — đã lấy 89% lợi ích mà không cần parser |
+
+**Cổng 2 (không-thoái-triển)** vẫn chưa thành test thường trú; hiện chạy thủ công cho từng thay đổi. Nên tự động hoá vì đây là cổng đã bắt được bug `0 → 30`.
 
 ---
 

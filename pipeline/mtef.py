@@ -628,16 +628,22 @@ class MTEFParser:
             if c:
                 r += "^" + _brace(c)
             return r
-        if sel == TM_UBAR:
-            return r"\underline" + _brace(a)
-        if sel == TM_OBAR:
-            return r"\overline" + _brace(a)
-        if sel in (TM_VEC, TM_ARROW):
-            return r"\vec" + _brace(a)
-        if sel == TM_TILDE:
-            return r"\tilde" + _brace(a)
-        if sel == TM_HAT:
-            return r"\hat" + _brace(a)
+        # Các template trang trí một ô: ô RỖNG thì không sinh macro rỗng.
+        # MathType hay để lại TM_OBAR rỗng giữa dòng, sinh ra "\overline{}\to"
+        # — KaTeX render thành một gạch trên lơ lửng không có nội dung.
+        # Đo được: selector 14 (TM_OBAR) là selector chưa khai báo fire nhiều
+        # nhất (52 lần), và \overline{} chiếm 23/23 ca đối-số-rỗng của corpus.
+        if sel in (TM_UBAR, TM_OBAR, TM_VEC, TM_ARROW, TM_TILDE, TM_HAT):
+            if not a.strip():
+                return ""
+            return {
+                TM_UBAR: r"\underline",
+                TM_OBAR: r"\overline",
+                TM_VEC: r"\vec",
+                TM_ARROW: r"\vec",
+                TM_TILDE: r"\tilde",
+                TM_HAT: r"\hat",
+            }[sel] + _brace(a)
         if sel == TM_STRIKE:
             if a == "=":
                 return r"\ne "
