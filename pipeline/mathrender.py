@@ -22,6 +22,9 @@ _KATEX_CSS = Path(__file__).parent.parent / "node_modules" / "katex" / "dist" / 
 
 _cache: dict[str, str | None] = {}
 
+# Công thức không parse được ở chế độ nghiêm — dữ liệu cho Cổng 1. Xem failures().
+_failures: list[dict[str, str]] = []
+
 # Equation Editor trong docx gốc nhiều chỗ gõ lẫn chữ tiếng Việt vào NGAY
 # TRONG vùng công thức (VD: "x ∈ S và x ∉ T" — "và" là chữ thường, không phải
 # biến toán), nên omml_to_latex() lấy ra latex kiểu 'S\T={x|x\in S và x\in T}'.
@@ -86,24 +89,49 @@ def _wrap_bare_words(tex: str) -> str:
 
 def clear_cache():
     _cache.clear()
+    _failures.clear()
+
+
+def failures() -> list[dict[str, str]]:
+    """Các công thức KaTeX KHÔNG parse được ở chế độ nghiêm, tích luỹ từ lần
+    clear_cache() gần nhất.
+
+    Mỗi phần tử: {"latex": <latex sau _wrap_bare_words>, "source": <latex gốc>,
+    "error": <thông báo KaTeX>}.
+
+    Đây là dữ liệu để Cổng 1 (xem tools/check_katex.py) làm fail build. Trước
+    đây thông tin này bị mất hoàn toàn vì katex_render.js chỉ dùng
+    throwOnError:false — lỗi đỏ đi thẳng ra sản phẩm mà không ai biết.
+    """
+    return list(_failures)
 
 
 def render_many(latex_list: list[str]) -> dict[str, str]:
     """Trả {latex: html}. Latex nào KaTeX không parse được thì rơi lại thành
-    `<code>latex gốc</code>` (không mất thông tin, không giả vờ đã dựng đúng)."""
+    `<code>latex gốc</code>` (không mất thông tin, không giả vờ đã dựng đúng).
+
+    Song song, mọi công thức không đạt chế độ nghiêm được ghi vào failures().
+    """
     from html import escape as _esc
 
     _cache.clear()  # Clear cache on every run so updated _tidy rules take effect!
     uniq = sorted(set(latex_list))
     todo = [s for s in uniq if s not in _cache]
     if todo:
+        prepared = [_wrap_bare_words(s) for s in todo]
         proc = subprocess.run(
-            ["node", str(_NODE_SCRIPT)], input=json.dumps([_wrap_bare_words(s) for s in todo]),
+            ["node", str(_NODE_SCRIPT)], input=json.dumps(prepared),
             capture_output=True, text=True, timeout=120)
         if proc.returncode != 0:
             raise RuntimeError(f"katex_render.js lỗi: {proc.stderr}")
-        for src, html in zip(todo, json.loads(proc.stdout)):
-            _cache[src] = html
+        for src, prep, item in zip(todo, prepared, json.loads(proc.stdout)):
+            # Tương thích cả contract cũ (chuỗi html) và mới ({html, error})
+            if isinstance(item, dict):
+                _cache[src] = item.get("html")
+                if item.get("error"):
+                    _failures.append({"latex": prep, "source": src, "error": item["error"]})
+            else:
+                _cache[src] = item
 
     return {s: (_cache[s] or f"<code>{_esc(s)}</code>") for s in uniq}
 

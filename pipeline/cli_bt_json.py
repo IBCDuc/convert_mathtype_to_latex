@@ -9,6 +9,7 @@ import json
 import argparse
 from pathlib import Path
 
+from . import mathrender
 from .exercises import convert_json
 
 
@@ -17,7 +18,13 @@ def main() -> int:
     ap.add_argument("inputs", nargs="+")
     ap.add_argument("-o", "--out", default="out-bt-json")
     ap.add_argument("--structured", action="store_true", help="Ghi file câu hỏi vào thư mục con theo cấu trúc SGK/Bài học")
+    ap.add_argument("--fail-on-katex-error", action="store_true",
+                    help="Exit code 1 nếu còn công thức KaTeX không render được (dùng cho CI)")
+    ap.add_argument("--katex-report", type=Path,
+                    help="Ghi danh sách công thức lỗi KaTeX ra file JSON")
     a = ap.parse_args()
+
+    mathrender.clear_cache()   # reset bộ đếm lỗi KaTeX cho lần chạy này
 
     files: list[Path] = []
     base_dir: Path | None = None
@@ -53,8 +60,17 @@ def main() -> int:
                 break
 
         if is_structured and matched_base:
-            rel = f.relative_to(matched_base.parent if matched_base.parent != matched_base else matched_base)
-            target_dir = out / rel.parent / f.stem
+            rel = f.relative_to(matched_base)
+            parts = []
+            for part in rel.parent.parts:
+                p_clean = part.strip()
+                if p_clean in ("__MACOSX",) or p_clean.startswith("."):
+                    continue
+                if "đã sửa" in p_clean or "Kiến thức trọng tâm" in p_clean:
+                    continue
+                if not parts or parts[-1].lower() != p_clean.lower():
+                    parts.append(p_clean)
+            target_dir = out.joinpath(*parts, f.stem)
         else:
             target_dir = out
 
@@ -86,6 +102,35 @@ def main() -> int:
                   f"nguồn={d['answer_source']:24} n_lựa_chọn={d['n_choices']}{tail}")
 
     print(f"\n✅ Hoàn thành! Tổng số {total_questions} file JSON câu hỏi đã tạo trong '{out}'")
+
+    # --- Cổng KaTeX: báo cáo công thức không render được -------------------
+    # Trước đây thông tin này bị mất sạch (throwOnError:false), lỗi đỏ đi thẳng
+    # ra sản phẩm. Nay nó hiện ra, và tuỳ chọn --fail-on-katex-error làm fail CI.
+    seen: set[tuple[str, str]] = set()
+    bad: list[dict[str, str]] = []
+    for fail in mathrender.failures():
+        key = (fail["source"], fail["error"])
+        if key not in seen:
+            seen.add(key)
+            bad.append(fail)
+
+    if bad:
+        print(f"\n⚠️  {len(bad)} công thức KaTeX KHÔNG render được:")
+        for fail in bad[:10]:
+            print(f"    {fail['error'][:90]}")
+            print(f"      TEX: {fail['source'][:90]}")
+        if len(bad) > 10:
+            print(f"    ... và {len(bad) - 10} công thức nữa")
+        if a.katex_report:
+            a.katex_report.write_text(
+                json.dumps(bad, ensure_ascii=False, indent=1), encoding="utf-8")
+            print(f"    Báo cáo đầy đủ: {a.katex_report}")
+        if a.fail_on_katex_error:
+            print("\n❌ FAIL — còn lỗi KaTeX (--fail-on-katex-error)")
+            rc = 1
+    else:
+        print("✅ Cổng KaTeX: mọi công thức đều render được")
+
     return rc
 
 

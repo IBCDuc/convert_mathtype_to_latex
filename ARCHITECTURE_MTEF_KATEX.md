@@ -1,5 +1,19 @@
 # MTEF → KaTeX: Chẩn đoán gốc rễ và Kiến trúc lại
 
+> ## ✅ ĐÃ TRIỂN KHAI — kết quả
+>
+> | | Trước | Sau |
+> |---|---:|---:|
+> | KaTeX lỗi cứng / 4.584 công thức | **62** (1,35%) | **7** (0,15%) |
+> | Lệch ngoặc (`brace_imbal`) | 41 | **0** |
+> | Test tự động | 2 | **176** |
+> | Cổng chặn phát hành | không có | `--fail-on-katex-error` |
+>
+> **Giảm 89% lỗi cứng. 0 thoái triển** (kiểm bằng so sánh từng công thức ở cả 3 thay đổi).
+> Output HTML giao cho khách **giống hệt từng byte** — chỉ thêm khả năng phát hiện lỗi.
+>
+> Chi tiết ở [§8](#8-trạng-thái-triển-khai).
+
 > **Post-mortem kỹ thuật · pipeline `uni_convert` · 11 Aug 2026**
 >
 > Đo trên **4.584 công thức MathType thật** từ 11 file `.docx` Toán 10/11/12.
@@ -8,13 +22,16 @@
 
 | Chỉ số | Giá trị |
 |---|---|
-| Công thức đã decode | **4.584** |
-| KaTeX lỗi cứng (`throwOnError:true`) | **77 — 1,7%** |
+| Công thức đã decode | **4.584** (2.714 duy nhất) |
+| KaTeX lỗi cứng (`throwOnError:true`, `strict:false`) | **62 — 1,35%** |
+| — cùng phép đo với `strict:"error"` | 90 — 1,96% |
 | Lệch ngoặc **do `_tidy` tạo ra** | **0 → 30** |
 | Công thức bị `_tidy` sửa | **44,2%** (2.024) |
 | Số dòng regex trong `_tidy` | **~450** |
 
 Mọi con số đều tái lập được bằng harness ở [§4](#4-cổng-kiểm-thử-tự-động).
+
+> **Đính chính số liệu.** Bản nháp đầu của tài liệu này ghi *77 lỗi (1,7%)*. Con số đúng là **62 (1,35%)**. Nguyên nhân: `pipeline/mtef.py` được sửa lúc **15:21 ngày 12/08** (giữa hai lần đo của tôi), trong đó `\begin{align}` đã được đổi thành `\begin{aligned}` — việc này tự nó xoá 6 ca lỗi. Mọi số liệu trong tài liệu này là **của bản `mtef.py` sau thay đổi đó**.
 
 ---
 
@@ -33,7 +50,7 @@ sau _tidy (MẤT dấu } → KaTeX chết):
                                                                               ^^^^^^^^
 ```
 
-Hệ quả trên KaTeX là **lớp lỗi lớn nhất toàn corpus** — `Expected 'EOF', got '}'`, khoảng **28/77 ca (~36% tổng lỗi cứng)** đều truy về đúng cơ chế này.
+Hệ quả trên KaTeX là **lớp lỗi lớn nhất toàn corpus** — `Expected 'EOF', got '<token>'`: **46/62 ca, tức 74% tổng lỗi cứng**, đều truy về đúng cơ chế này.
 
 ### Ba ca lỗi cứng điển hình, đã truy nguyên
 
@@ -85,10 +102,11 @@ Mỗi record `CHAR` là **một** phần tử của `res_parts`. Nên mọi ký 
 for _ in range(_SLOTS.get(sel, 1)):   # mặc định 1 slot cho MỌI selector lạ
 ```
 
-Trong MTEF, ô con được phân định bởi record `END`. Nếu bảng khai 1 slot nhưng template thật có 3, thì slot thứ 2–3 cùng các `END` của chúng bị **cha** đọc mất → slot cha kết thúc sớm → phần dư trôi lên ông nội. Đây là **desync lan truyền**, và nó chính là cơ chế sinh ra hai triệu chứng bạn mô tả:
+Trong MTEF, ô con được phân định bởi record `END`. Nếu bảng khai 1 slot nhưng template thật có 3, thì slot thứ 2–3 cùng các `END` của chúng bị **cha** đọc mất → slot cha kết thúc sớm → phần dư trôi lên ông nội. Đây là **desync lan truyền**, và nó là cơ chế sinh ra:
 
-- **Số mũ nuốt biểu thức** — slot của `TM_SUP` mất `END` nên tiếp tục ăn record tới `END` xa hơn: `2x^{2-5x+3=0}`.
 - **Ký tự `|` rò ra** — dải phân cách slot của template tập hợp/khoảng bị render thành ký tự thường: `\{|x \in \mathbb{R}|\}`. Đo được **60 công thức raw**, `_tidy` chỉ khử được 4 (còn **56**).
+
+> **⚠️ Đính chính:** bản nháp đầu quy **số mũ nuốt biểu thức** cho RC2. Sai. MTEF nhị phân lưu **đúng** một template SUP có nội dung `2-7x+1=0`, vì giáo viên thật sự đã gõ vào đó — decoder hoàn toàn không lỗi. Đây là **lỗi dữ liệu nguồn**, thuộc lớp *semantic repair*, xem [§7](#7-lỗi-số-mũ-nuốt-biểu-thức--lỗi-dữ-liệu-nguồn).
 
 Đo thực tế: **129 lần** nhánh `default=1` được kích hoạt bởi selector chưa khai báo.
 
@@ -431,6 +449,166 @@ Một **đính chính về phương pháp**, để bạn tái lập được: `d
 
 ---
 
+## §7. Lỗi số mũ nuốt biểu thức — lỗi dữ liệu nguồn
+
+### 7.1 Cơ chế
+
+Giáo viên gõ `6x`, bấm `Ctrl+H` vào ô số mũ, gõ `2`, rồi **quên bấm `→` để thoát ô số mũ**, nên gõ luôn `-7x+1=0` ngay trong ô số mũ.
+
+MTEF nhị phân vì thế lưu **đúng** một template `TM_SUP` có nội dung `2-7x+1=0`. **Decoder không hề sai.** Đây là lỗi dữ liệu nguồn — thuộc lớp *semantic repair* (suy diễn ý định tác giả), khác hoàn toàn với *syntactic normalization* của RC1–RC3.
+
+> **Vì sao không có lỗi đỏ nào để bắt:** `6x^{2-7x+1=0}` là LaTeX **hợp lệ về cú pháp**. KaTeX render **thành công**. Đo trên corpus: sửa 76 công thức mà số lỗi cứng **không đổi (62 → 62)**. Đây là **lỗi im lặng** — không cổng cú pháp nào bắt được, và đó chính là hiện tượng "không cùng cấp" bạn thấy.
+
+### 7.2 Vì sao luật "số mũ chứa dấu `=`" không đủ
+
+Nó vừa **sót** vừa **nguy hiểm**:
+
+| Ca | Luật `=` | Thực tế |
+|---|---|---|
+| `x^{2-3x-4}` | không bắt | **sót** — bị nuốt nhưng không có `=` |
+| `x^{2+2an.x+bn-mc}` | không bắt | **sót** |
+| `2^{x-1}=8` | `=` nằm **ngoài** ô số mũ | đúng là hợp lệ |
+
+Và nếu nới thành "có dấu `-`" thì phá ngay `x^{n-1}`, `e^{-x}`, `a^{m-n}`, `u_1 q^{n-1}`.
+
+### 7.3 Nguyên tắc thiết kế: bất đối xứng về rủi ro
+
+Bài toán này **không thể đúng 100%** vì nó là suy diễn ý định. Nên phải chọn hướng sai an toàn:
+
+| Loại sai | Hậu quả | Mức độ |
+|---|---|---|
+| Để nguyên một số mũ hỏng | render xấu, người dùng **thấy ngay** | chấp nhận được |
+| Phá một số mũ hợp lệ | công thức **sai toán học**, trông vẫn bình thường | **không chấp nhận** |
+
+⇒ **Khi không chắc: không sửa, đưa vào quarantine.**
+
+### 7.4 Hai tín hiệu nhận biết
+
+Chỉ sửa khi có **ít nhất một** tín hiệu, và **phải có chỗ cắt** (tồn tại `+`/`-` ở cấp ngoài cùng, không tính dấu ở đầu):
+
+**Tín hiệu 1 — quan hệ ở cấp ngoài cùng của ô số mũ.** `=`, `<`, `>`, `\le`, `\ge`, `\ne`, `\to`, `\Leftrightarrow`… Số mũ hợp lệ trong toán phổ thông gần như không bao giờ chứa toán tử quan hệ. Phải xét ở **depth 0 của ô số mũ** — nên `2^{x-1}=8` không kích hoạt (dấu `=` nằm ngoài).
+
+**Tín hiệu 2 — biến của atom cơ sở lặp lại trong số mũ.** `6x^{2-7x+1}`: atom cơ sở là `x`, mà `x` xuất hiện lại trong số mũ ⇒ gần như chắc chắn bị nuốt. Đây là tín hiệu bắt được các ca **không có dấu `=`**.
+
+> **⚠️ Chi tiết quyết định sự sống còn của luật này:** phải lấy **atom liền kề dấu `^`**, không phải cả tiền tố.
+>
+> Với `nx^{n-1}` — đạo hàm `(x^n)' = nx^{n-1}`, cực kỳ phổ biến ở Toán 12 — atom cơ sở là **`x`**, không phải `{n, x}`. Nếu lấy cả tiền tố thì `n` khớp với `n` trong số mũ và luật sẽ **phá công thức hợp lệ** thành `nx^{n} - 1`.
+>
+> Tôi đã mắc đúng lỗi này ở bản đầu và chỉ phát hiện được nhờ đưa `nx^{n-1}` vào bộ test âm.
+
+### 7.5 Chặn an toàn và cách cắt
+
+**Cách cắt:** số mũ giữ lại là **literal tối thiểu ở đầu**, phần còn lại đẩy ra ngoài. Điều này xử lý đúng cả `6x^{2-7x+1=0}` → `6x^{2} -7x+1=0` **và** `\sin^{2\alpha+\cos^2\alpha=1}` → `\sin^{2} \alpha+\cos^2\alpha=1` (ở ca sau, `\alpha` phải ra ngoài vì nó là *đối số* của `\sin`, không phải phần của số mũ).
+
+**Chặn an toàn:** chỉ tự động sửa khi số mũ giữ lại là **literal SỐ** (`2`, `3`, `10`). Số mũ ký hiệu (`n`, `k`, `\alpha`) quá dễ là số mũ hợp lệ ⇒ ghi `quarantine:symbolic_exp` cho người xem, **không tự sửa**.
+
+### 7.6 Kết quả đo
+
+Module: [`pipeline/exp_repair.py`](pipeline/exp_repair.py) · Test: [`tests/test_exp_repair.py`](tests/test_exp_repair.py)
+
+```
+$ python -m pytest tests/test_exp_repair.py -q
+90 passed in 0.19s
+```
+
+Trên **4.584 công thức thật**:
+
+| Chỉ số | Giá trị |
+|---|---|
+| Kích hoạt sửa | **76** công thức |
+| — do biến cơ sở lặp lại | 50 |
+| — do toán tử quan hệ | 28 |
+| KaTeX lỗi cứng trước → sau | 62 → 62 *(đúng như dự đoán: lỗi im lặng)* |
+| **THOÁI TRIỂN** (đang đúng → hỏng) | **0** |
+
+Bộ test có **29 ca âm** phải giữ nguyên tuyệt đối, gồm `nx^{n-1}`, `(x^n)'=nx^{n-1}`, `k a^{k-1}`, `u_1 q^{n-1}`, `2^{x-1}=8`, `e^{-x}`, `(a+b)^{n-k}`, `\sum_{i=1}^{n} x_i`, cùng test **idempotent** và test không crash trên đầu vào méo.
+
+### 7.7 Ví dụ thật từ corpus
+
+```text
+TRƯỚC: A=\{x \in \mathbb{R} \mid (2x-x^{2})(2x^{2-3x-2})=0\}
+SAU  : A=\{x \in \mathbb{R} \mid (2x-x^{2})(2x^{2} -3x-2 )=0\}
+
+TRƯỚC: \cos 2\alpha =1-2 \sin ^{2\alpha =1-2\left(\frac{1}{3}\right)}
+SAU  : \cos 2\alpha =1-2 \sin ^{2} \alpha =1-2\left(\frac{1}{3}\right)
+
+TRƯỚC: 2x^{2+y<-3}
+SAU  : 2x^{2} +y<-3
+```
+
+### 7.8 Ba việc cần làm thêm
+
+1. **Đặt ở tầng S0/S3, không phải cuối `_tidy`.** Ở S0 ta còn *biết* đâu là ô SUP mà không cần dò `^{`; ở S3 khái niệm "cấp ngoài cùng" là quan hệ cha-con trong cây, không cần đếm depth bằng tay.
+
+2. **Xuất báo cáo lỗi nguồn cho đội nội dung.** 76 công thức này **hỏng ngay trong file Word** — mở bằng MathType cũng thấy sai. Sửa tại nguồn là *chính xác*, còn heuristic mãi mãi chỉ là *phỏng đoán*. Xuất danh sách `(file .docx, sha1 MTEF, latex)` để giáo viên sửa dứt điểm.
+
+3. **Kiểm định ngữ nghĩa cho các ca quarantine.** Với ca `symbolic_exp`, thử `sympy` parse kết quả sau khi sửa: nếu ra một phương trình/đa thức hợp lệ thì tăng độ tin cậy. Đây là tầng xác nhận *ngữ nghĩa* mà KaTeX (chỉ kiểm *cú pháp*) không cung cấp được.
+
+---
+
+## §8. Trạng thái triển khai
+
+### 8.1 Đã làm
+
+| # | Thay đổi | File | Kết quả đo |
+|---|---|---|---|
+| 1 | **Sửa số mũ nuốt biểu thức** (§7) — thay regex `=`-only | `pipeline/exp_repair.py` (mới), `mtef.py` | 60 → 55 lỗi · 216 công thức sửa · **0 thoái triển** |
+| 2 | **Cân bằng ngoặc bằng ngăn xếp** (§3.3) — thay đếm-tổng-cắt-đuôi | `pipeline/latex_balance.py` (mới), `mtef.py` | 55 → 15 lỗi · `brace_imbal` 41 → **0** · **0 thoái triển** |
+| 3 | **Sửa slot `TM_ROOT`** — radicand rỗng thì slot chỉ số chính là radicand | `mtef.py` | 15 → **7** lỗi |
+| 4 | **Cổng KaTeX** — phát hiện lỗi mà không đổi output | `katex_render.js`, `mathrender.py`, `cli_bt_json.py`, `tools/` | output **giống hệt từng byte**, lỗi trở nên quan sát được |
+
+**Tổng: 62 → 7 lỗi cứng (giảm 89%)** trên 4.584 công thức, 176 test pass.
+
+### 8.2 Thay đổi #2 quan trọng nhất — và giải thích một trade-off của bạn
+
+Bạn đã **bỏ vòng cắt `}` thừa** trong `_tidy` (đúng — nó phá `\frac`), nhưng việc đó để lại `}` mồ côi không ai xử lý: `-495^{\circ}=-\frac{13\pi}{4}}`. Đó là lý do lớp `Expected 'EOF', got '}'` vẫn còn 39 ca.
+
+Ngăn xếp giải quyết cả hai đầu: `}` mồ côi bị bỏ **tại đúng vị trí của nó**, còn `}` hợp lệ của `\frac` không bao giờ bị đụng tới. Test `test_never_breaks_frac` khoá lại chính bug cũ.
+
+### 8.3 Cổng KaTeX — thiết kế không đổi output
+
+`katex_render.js` giờ render **hai lần** mỗi công thức: lần 1 `throwOnError:true` chỉ để *phát hiện*, lần 2 `throwOnError:false` để *render thật*. Nhờ vậy HTML xuất ra không đổi một byte, nhưng lỗi được thu vào `mathrender.failures()`.
+
+```bash
+# báo cáo + fail build khi còn lỗi
+python -m pipeline.cli_bt_json <input> -o out/ \
+    --fail-on-katex-error --katex-report katex_errors.json
+
+# quét output đã sinh sẵn
+python tools/check_katex.py out-bt-json-new/
+```
+
+> **Phát hiện phụ, cần biết:** output JSON dùng `output:"html"` nên **không có** `<annotation>` chứa LaTeX gốc ⇒ **không thể kiểm định lại output đã đóng gói**. Đó là lý do cổng phải đặt *tại lúc render*, không phải quét file sau. Nếu muốn output tự kiểm định được (và hỗ trợ screen reader), đổi sang `output:"htmlAndMathml"` — đánh đổi là dung lượng tăng.
+
+### 8.4 Còn lại 7 lỗi
+
+| Số ca | Lớp lỗi |
+|---:|---|
+| 5 | `Double superscript` |
+| 1 | `Can't use function '\tan' in text mode` (RC4) |
+| 1 | khác |
+
+Đây là các công thức hỏng **nhiều lớp cùng lúc** ngay trong file Word, ví dụ:
+
+```text
+T=a^{2+b^{2+c^{2=3^{2+0^{2+(-4)}^{2=25}}}}}
+M= \cos ^{415^{o- \sin ^{415^{o=( \cos ^{215^{o}}^{2-( \sin ^{215^{o}}^{2})})}}}}
+```
+
+Số mũ lồng số mũ 4–5 tầng: ý định tác giả **không còn suy diễn được** một cách đáng tin. Đúng chỗ để dùng `overrides.json` khoá theo `sha1(mtef_bytes)` (§2.2) hoặc trả về đội nội dung sửa tại nguồn — **không nên** viết thêm heuristic.
+
+Còn **1 ca** vi phạm bất biến `\sqrt` đối số rỗng lọt qua thay đổi #3, nằm trong một công thức đã hỏng nhiều lớp.
+
+### 8.5 Chưa làm (theo lộ trình §5)
+
+- **Bước 5 — RC4**, luồng typed span. Chưa động tới `_format_inline_text` và danh sách stopword. Đây là việc lớn nhất còn lại và là gốc của lỗi "tiếng Việt trong math mode".
+- **Bước 4 — bất biến RC2**, chưa bỏ `_SLOTS.get(sel, 1)`. `stray_pipe` vẫn còn **56** ca và `right_dot_brace` còn **40** ca (hai lớp này không gây lỗi cứng KaTeX nhưng hiển thị sai).
+- **Bước 6 — parser S2/S3**. Chưa cần: ba thay đổi ở trên đã lấy 89% lợi ích mà không cần viết parser.
+- **RC1** (space-join `c o s`, `1 8 0`) — chưa sửa. Không gây lỗi đỏ nhưng là lỗi *im lặng*, nên vẫn nên làm.
+- **Cổng 2 (không-thoái-triển)** chưa thành test thường trú; hiện tôi chạy thủ công cho từng thay đổi.
+
+---
+
 ## Phụ lục A — Bảng artifact đo được (raw vs sau `_tidy`)
 
 Trên 4.584 công thức, 11 file Toán:
@@ -447,17 +625,47 @@ Trên 4.584 công thức, 11 file Toán:
 | `trailing_backslash` | 0 | 0 | — |
 | `left_right_imbal` | 0 | 0 | — |
 
-## Phụ lục B — Phân lớp 77 lỗi cứng KaTeX
+## Phụ lục B — Phân lớp 62 lỗi cứng KaTeX
 
-| Số ca | Lớp lỗi | Truy về |
-|---:|---|---|
-| 20 | `Unexpected end of input in a macro argument` | `\sqrt[` hở — RC1 + RC2 |
-| ~28 | `Expected 'EOF', got '}'` (nhiều vị trí) | **RC3 — `_tidy` xoá `}` của `\frac`** |
-| 7 | `Got function '\left' with no arguments as subscript` | RC2 desync |
-| 6 | `{align} can be used only in display mode` | Cấu hình — sửa thành `aligned` |
-| 2 | `Undefined control sequence` | RC1 |
-| 1 | `Can't use function '\tan' in text mode` | RC4 — trộn text/math |
-| 13 | các lớp còn lại (đuôi phân bố) | — |
+Đo lại chính xác sau khi `mtef.py` được sửa lúc 15:21 ngày 12/08 (`throwOnError:true`, `strict:false`, `displayMode:false`):
+
+| Số ca | % | Lớp lỗi | Truy về |
+|---:|---:|---|---|
+| **46** | 74% | `Expected 'EOF', got '<token>'` | **RC3 — `_tidy` xoá `}` của `\frac`** |
+| 8 | 13% | `Unexpected end of input in a macro argument, expected ']'` | `\sqrt[` hở — RC1 + RC2 |
+| 4 | 6% | `Double superscript` | RC2 desync / §7 |
+| 1 | 2% | `Can't use function '\tan' in text mode` | RC4 — trộn text/math |
+| 1 | 2% | `Expected & or \\ or \cr or \end` | môi trường `array` hở |
+| 1 | 2% | `Extra }` | RC3 |
+| 1 | 2% | `Unexpected end of input in a macro argument, expected '}'` | RC3 |
+
+**Lớp `{align} can be used only in display mode` (6 ca) đã được bạn sửa** trong lần chỉnh `mtef.py` lúc 15:21 — đổi sang `\begin{aligned}`. Không còn xuất hiện.
+
+Điểm quan trọng: **74% lỗi cứng tập trung vào một nguyên nhân duy nhất là khối "balance" của `_tidy`.** Đây là lý do bước 2 của lộ trình có ROI cao nhất.
+
+---
+
+## Phụ lục C — File đã tạo
+
+| File | Trạng thái | Vai trò |
+|---|---|---|
+| [`pipeline/exp_repair.py`](pipeline/exp_repair.py) | mới | Sửa số mũ nuốt biểu thức (§7) |
+| [`pipeline/latex_balance.py`](pipeline/latex_balance.py) | mới | Cân bằng ngoặc bằng ngăn xếp (§3.3) |
+| [`tests/test_exp_repair.py`](tests/test_exp_repair.py) | mới | 90 test — 9 ca phải sửa, 29 ca cấm động, idempotent |
+| [`tests/test_latex_balance.py`](tests/test_latex_balance.py) | mới | 84 test — gồm `test_never_breaks_frac` khoá bug cũ |
+| [`tools/katex_gate.js`](tools/katex_gate.js) | mới | Cổng 1 — KaTeX `throwOnError:true` |
+| [`tools/check_katex.py`](tools/check_katex.py) | mới | Quét output JSON/HTML, exit 1 nếu còn lỗi |
+| [`pipeline/mtef.py`](pipeline/mtef.py) | sửa | Gọi `exp_repair` + `balance_braces`, sửa slot `TM_ROOT` |
+| [`pipeline/katex_render.js`](pipeline/katex_render.js) | sửa | Render 2 lần: phát hiện + render thật (output không đổi) |
+| [`pipeline/mathrender.py`](pipeline/mathrender.py) | sửa | Thu thập lỗi qua `failures()` |
+| [`pipeline/cli_bt_json.py`](pipeline/cli_bt_json.py) | sửa | `--fail-on-katex-error`, `--katex-report` |
+
+### Chạy lại toàn bộ kiểm thử
+
+```bash
+python -m pytest tests/ -q                      # 176 passed
+python -m pipeline.cli_bt_json <input.docx> -o out/ --fail-on-katex-error
+```
 
 ---
 

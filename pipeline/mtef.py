@@ -18,6 +18,9 @@ from dataclasses import dataclass, field
 
 import olefile
 
+from .exp_repair import repair_swallowed_exponent
+from .latex_balance import balance_braces
+
 
 # ---------------------------------------------------------------- record tags
 END, LINE, CHAR, TMPL, PILE, MATRIX = 0, 1, 2, 3, 4, 5
@@ -593,6 +596,12 @@ class MTEFParser:
             return r"\left" + lo + a + r"\right" + hi
 
         if sel == TM_ROOT:
+            # Slot a = chỉ số (index), slot b = biểu thức dưới căn (radicand).
+            # Nhưng MathType nhiều chỗ dồn radicand vào slot a và để b RỖNG, sinh ra
+            # \sqrt[2-\sqrt{2}]{} — KaTeX chết vì thiếu đối số của macro.
+            # Radicand rỗng thì luôn là hỏng, nên coi a chính là radicand.
+            if not b.strip() and a.strip():
+                return r"\sqrt" + _brace(a)
             return (r"\sqrt" + _brace(b)) if not a else (r"\sqrt[" + a + "]" + _brace(b))
         if sel == TM_FRACT:
             if not a.strip() and not b.strip():
@@ -714,12 +723,14 @@ def _tidy(s: str) -> str:
     s = re.sub(r'(\\mid\s*)\\?\}\s*', r'\1', s)
     s = re.sub(r'\\+$', r'', s)
 
-
-    # Fix Exponent Swallowing with '=' (e.g. 2x^{2-5x+3=0} -> 2x^2 - 5x + 3 = 0)
-    s = re.sub(r'([a-zA-Z0-9\)])\s*\^\s*\{\s*(\d+|[a-zA-Z])\s*([\+\-\s][^\}\=]*?\=.*?)\s*\\?\}', r'\1^\2 \3', s)
-
-    # Fix Exponent Swallowing in polynomials (e.g. x^{2 - 3x - 4} -> x^2 - 3x - 4)
-    s = re.sub(r'([a-zA-Z0-9\)])\s*\^\s*\{\s*(\d+)\s*([\+\-][\d\s]*[a-zA-Z][^\}]*)\}', r'\1^\2 \3', s)
+    # Fix MathType author typing artifact: author typed full equation inside superscript slot
+    # (e.g. 2x^{2-5x+3=0} -> 2x^2 - 5x + 3 = 0), because they forgot to press -> to exit the
+    # superscript slot. See pipeline/exp_repair.py for the full rationale and safety analysis.
+    #
+    # Supersedes the previous '='-only regex: exp_repair also catches the no-'=' variant
+    # (x^{2-3x-4}) via base-variable recurrence, tracks brace depth so that 2^{x-1}=8 is left
+    # alone, and refuses to touch symbolic exponents (nx^{n-1}) which the old regex would break.
+    s, _exp_notes = repair_swallowed_exponent(s)
 
     # Fix \end{array\} -> \end{array}
     s = re.sub(r'\\end\{array\\?\}', r'\\end{array}', s)
@@ -1109,7 +1120,7 @@ def _tidy(s: str) -> str:
 
 
     # Fix unescaped closing set brace e.g. \{k\pi \mid k \in \mathbb{Z}} -> \{k\pi \mid k \in \mathbb{Z}\}
-    if r"\{" in s and s.strip().endswith("}") and not s.strip().endswith(r"\}"):
+    if s.count(r"\{") > s.count(r"\}") and s.strip().endswith("}") and not s.strip().endswith(r"\}"):
         s = s.strip()[:-1] + r"\}"
 
     # Strip extra trailing braces after \right.
@@ -1120,14 +1131,11 @@ def _tidy(s: str) -> str:
     s = re.sub(r'\\+$', '', s.strip())
 
 
-    # Balance unclosed { braces or strip extra trailing } braces (ignoring escaped \{ and \})
-    n_open = len(re.findall(r'(?<!\\)\{', s))
-    n_close = len(re.findall(r'(?<!\\)\}', s))
-    if n_open > n_close:
-        s += '}' * (n_open - n_close)
-    while n_close > n_open and s.endswith('}'):
-        s = s[:-1].strip()
-        n_close -= 1
+    # Balance braces with a STACK, not by counting totals and trimming the tail.
+    # Counting totals cannot tell WHERE the imbalance is, so trimming from the end
+    # deletes the legitimate closing brace of a \frac when the stray } sits in the
+    # middle: \frac{1}{cos} -> \frac{1{cos}. See pipeline/latex_balance.py.
+    s, _brace_notes = balance_braces(s)
 
     # Balance unclosed \left fences with \right. if \left count > \right count
     n_left = len(re.findall(r'\\left\b', s))

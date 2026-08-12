@@ -1,3 +1,7 @@
 {
-  "_comment": "SHA1-indexed MTEF binary overrides for corrupted formulas that cannot be decoded algorithmically."
+  "_comment": "SHA1-indexed MTEF binary overrides for corrupted formulas that cannot be decoded algorithmically.",
+  "bd32a6dacb3967812eefc7ef239922c22253b7ed": {
+    "latex": "\\cos^2 15^{\\circ} - \\sin^2 15^{\\circ}",
+    "note": "Toán 11 Bài 2 f233 — MTEF corrupted exponent sequence"
+  }
 }

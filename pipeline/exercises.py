@@ -200,10 +200,10 @@ def _format_inline_text(text: str) -> str:
     if not text_strip or text_strip.startswith("[MATH:") or text_strip.startswith("[IMAGE:"):
         return text
 
-    # If pure math (no Vietnamese), format entire string as math
+    # Strict promotion: ONLY promote if string has NO Vietnamese and contains explicit LaTeX macros
     if not RE_VIETNAMESE.search(text_strip):
-        has_latex = bool(re.search(r'(\\[a-zA-Z]+|\{.*?\}|[A-Z]\s*=\s*[\{\[\(]|[\=\<\>≤≥±≠∈∉⊂⊃∪∩])', text_strip))
-        if has_latex:
+        has_explicit_macro = bool(re.search(r'(\\[a-zA-Z]+|\{.*?\}|[A-Z]\s*=\s*[\{\[\(])', text_strip))
+        if has_explicit_macro:
             m = re.match(r'^(.*?)([.,;]*)$', text_strip)
             if m:
                 math_part = m.group(1).strip()
@@ -211,18 +211,7 @@ def _format_inline_text(text: str) -> str:
                 if math_part:
                     tidied = mtef._tidy(math_part)
                     return f"[MATH: {tidied}]{punct_part}"
-        return text
-
-    # If mixed Vietnamese + inline math expressions, extract and format embedded math expressions
-    def _sub_math(match: re.Match) -> str:
-        raw_m = match.group(0).strip()
-        if not raw_m:
-            return match.group(0)
-        tidied_m = mtef._tidy(raw_m)
-        return f"[MATH: {tidied_m}]"
-
-    formatted = RE_INLINE_MATH.sub(_sub_math, text)
-    return formatted
+    return text
 
 
 
