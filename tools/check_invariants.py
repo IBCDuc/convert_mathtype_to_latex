@@ -93,14 +93,33 @@ def spurious_pipe_style(tex: str) -> bool:
     return re.search(r"\\in[^|]{0,24}\|", tex) is not None
 
 
-def right_dot_brace(tex: str) -> bool:
-    """RC3 — \\right. dính ngay dấu ngoặc nhóm."""
-    return re.search(r"\\right\s*\.\s*\}", tex) is not None
+# ĐÃ BỎ: right_dot_brace.
+#
+# Bất biến này từng báo 38 ca và bị tôi xếp ưu tiên 1. Kiểm chứng bằng KaTeX cho
+# thấy nó là DƯƠNG TÍNH GIẢ HOÀN TOÀN — cả 5 biến thể đều render ĐẠT:
+#
+#     {...\right.}     ĐẠT      {...\right. }   ĐẠT      \left\{...\right.   ĐẠT
+#     {...\right..\}}  ĐẠT      {...\right.\}}  ĐẠT
+#
+# Các công thức bị gắn cờ đều dạng `{ \left\{ ... \right. }` — một group bọc ngoài
+# chứa cặp \left...\right hoàn chỉnh, tức LaTeX hợp lệ.
+#
+# Kéo theo: chú thích trong _tidy ghi "KaTeX requires delimiter space before group
+# brace" dựa trên TIỀN ĐỀ SAI. KaTeX không đòi khoảng trắng đó.
 
 
 def empty_macro_arg(tex: str) -> bool:
     """\\sqrt / \\frac với đối số rỗng — luôn là hỏng."""
     return re.search(r"\\(?:sqrt|frac|overline|underline)(?:\[[^\]]*\])?\{\}", tex) is not None
+
+
+def escaped_brace_in_macro(tex: str) -> bool:
+    r"""``\mathbb{Z\}}`` — dấu ``\}`` lọt vào trong đối số macro, render ra "Z}".
+
+    Sinh ra khi luật escape ngoặc cuối biến ``\mathbb{Z}`` thành ``\mathbb{Z\}``
+    rồi bộ cân bằng thêm ``}`` để bù. Đo được 6 ca; nay phải luôn bằng 0.
+    """
+    return re.search(r"\\(?:mathbb|mathrm|text|mathcal|operatorname)\{[^{}]*\\\}", tex) is not None
 
 
 def brace_imbalance(tex: str) -> bool:
@@ -122,25 +141,31 @@ INVARIANTS = {
     "spaced_digits": spaced_digits,
     "stray_pipe": stray_pipe,
     "spurious_pipe_style": spurious_pipe_style,
-    "right_dot_brace": right_dot_brace,
     "empty_macro_arg": empty_macro_arg,
+    "escaped_brace_in_macro": escaped_brace_in_macro,
     "brace_imbalance": brace_imbalance,
     "pua_chars": pua_chars,
 }
 
 # Bất biến PHẢI bằng 0 — tăng dù chỉ 1 ca cũng là fail, không cần baseline.
-MUST_BE_ZERO = {"brace_imbalance", "pua_chars"}
+MUST_BE_ZERO = {"brace_imbalance", "pua_chars", "escaped_brace_in_macro"}
 
 
 def collect_latex(root: pathlib.Path) -> tuple[list[str], int, list[str]]:
-    """Chạy pipeline thật, thu mọi LaTeX đi vào KaTeX (cả 2 đường)."""
+    """Chạy pipeline thật, thu ĐÚNG chuỗi mà KaTeX nhận (cả 2 đường).
+
+    QUAN TRỌNG: phải áp `_wrap_bare_words` như `render_many` làm bên trong. Nếu
+    chỉ bắt `latex_list` ở đầu vào thì ta đo chuỗi TRƯỚC tầng chuẩn hoá cuối, và
+    sẽ báo sai — ví dụ 'và' bị tính là tiếng Việt trong math mode dù ngay sau đó
+    nó đã được bọc thành `\\text{ và }`.
+    """
     from pipeline import exercises, mathrender
 
     seen: list[str] = []
     original = mathrender.render_many
 
     def spy(latex_list):
-        seen.extend(latex_list)
+        seen.extend(mathrender._wrap_bare_words(s) for s in latex_list)
         return original(latex_list)
 
     mathrender.render_many = spy

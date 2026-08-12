@@ -72,6 +72,35 @@ def brace_defects(s: str) -> dict[str, int]:
     return {"orphan_close": orphan_close, "unclosed_open": stack}
 
 
+def trailing_close_is_orphan(s: str) -> bool:
+    r"""Dấu ``}`` ở CUỐI chuỗi có phải ngoặc đóng MỒ CÔI (không khớp ``{`` nào)?
+
+    Dùng để canh các luật kiểu "escape dấu ngoặc tập hợp ở cuối". Nếu ``}`` cuối
+    đang đóng một group hợp lệ thì escape nó sẽ phá group đó::
+
+        \\mathbb{Z}   ->  \\mathbb{Z\\}   ->  (cân bằng)  ->  \\mathbb{Z\\}}   ✗
+
+    Trả False khi chuỗi không kết thúc bằng ``}`` (kể cả kết thúc bằng ``\\}``).
+    """
+    t = s.rstrip()
+    if not t.endswith("}"):
+        return False
+    depth = 0
+    last_kind = None
+    last_orphan = False
+    for kind, _text, _i in _scan(t):
+        if kind == "open":
+            depth += 1
+        elif kind == "close":
+            last_orphan = depth == 0
+            if depth:
+                depth -= 1
+        last_kind = kind
+    # Token CUỐI phải đúng là ngoặc đóng. Chuỗi kết thúc bằng "\}" thì token cuối
+    # là escape ('other'), nên không tính — đó là ngoặc literal, đã escape rồi.
+    return last_kind == "close" and last_orphan
+
+
 def balance_braces(s: str) -> tuple[str, list[str]]:
     """Cân bằng ``{}`` bằng ngăn xếp. Trả ``(kết quả, ghi chú)``.
 

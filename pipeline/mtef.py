@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 import olefile
 
 from .exp_repair import repair_swallowed_exponent
-from .latex_balance import balance_braces
+from .latex_balance import balance_braces, trailing_close_is_orphan
 
 
 # ---------------------------------------------------------------- record tags
@@ -727,6 +727,15 @@ def _tidy(s: str) -> str:
     s = re.sub(r'\\\{\|\s*([a-zA-Z0-9]+)\s*\\in\s*(\\?[a-zA-Z]+(?:\{[a-zA-Z0-9]*\})?)\s*\|?\\?\}?\s*', r'\\{\1 \\in \2 \\mid ', s)
     s = re.sub(r'\\\{\|\s*', r'\\{', s)
     s = re.sub(r'(\\mid\s*)\\?\}\s*', r'\1', s)
+
+    # Template tập hợp của MathType có HAI dải phân cách; dải MỞ đã xử lý ở trên,
+    # đây là dải ĐÓNG rò ra ngay trước \}:  \{k\pi |k\in \mathbb{Z} |\}
+    #
+    # Điều kiện "có khoảng trắng phía trước" là chỗ phân biệt sống còn:
+    #   "\mathbb{Z} |\}"  -> dải phân cách rò ra, phải BỎ
+    #   "|x|\}"           -> dấu giá trị tuyệt đối, phải GIỮ (không có space)
+    # Nhận cả \} và } vì luật escape "} -> \}" chạy SAU luật này.
+    s = re.sub(r'\s+\|\s*(?=\\?\})', '', s)
     s = re.sub(r'\\+$', r'', s)
 
     # Fix MathType author typing artifact: author typed full equation inside superscript slot
@@ -757,10 +766,15 @@ def _tidy(s: str) -> str:
     s = re.sub(r'(\\in\s*[NZQR])\s*/\s*', r'\1 \\mid ', s)
 
     # Ensure trailing set brace is escaped \} if formula starts with \{
+    #
+    # Only touch a trailing } that is genuinely ORPHANED. Escaping a } that closes
+    # a real group destroys that group, and the balancer then papers over it:
+    #     ...\mathbb{Z}  ->  ...\mathbb{Z\}  ->  (balance)  ->  ...\mathbb{Z\}}
+    # which renders as "Z}" instead of "ℤ". Measured 6 such formulas in the corpus.
     if r'\{' in s and not s.rstrip().endswith(r'\}') and not s.rstrip().endswith(r'\end{array}'):
-        if s.endswith('}'):
-            s = s[:-1] + r'\}'
-        elif not s.endswith(r'\}'):
+        if trailing_close_is_orphan(s):
+            s = s.rstrip()[:-1] + r'\}'
+        elif not s.rstrip().endswith('}'):
             s += r'\}'
 
     # Fix MathType corruption: x\in (... \subset (a;b) ) -> x\in (...) \subset (a;b)
@@ -916,7 +930,15 @@ def _tidy(s: str) -> str:
     s = re.sub(r"\bC\s*([a-zA-Z0-9])\s*=\s*", r"C_{\1} = ", s)
 
     # Clean up orphan bracket suffixes after fences e.g. (-\infty; -2)[) -> (-\infty; -2)
-    s = re.sub(r"(\([^\)]+\)|\[[^\]]+\]|\{[^\}]+\})\s*(\[\)|\[\]|\(\]|\\\)|\\\]|\\\})", r"\1", s)
+    #
+    # \} is NOT in the alternation: a trailing \} is far more often the legitimate
+    # closer of a set \{...\} than an artifact, and \{[^}]+\} happily matches the
+    # argument of any macro. That made this rule delete the set closer:
+    #     \{k\pi \mid k \in \mathbb{Z}\}  ->  \{k\pi \mid k \in \mathbb{Z}
+    # It went unnoticed because the trailing-brace-escape rule above had already
+    # turned \mathbb{Z}\} into \mathbb{Z\}, which no longer matched here — the two
+    # bugs masked each other until the escape rule was made stack-aware.
+    s = re.sub(r"(\([^\)]+\)|\[[^\]]+\]|\{[^\}]+\})\s*(\[\)|\[\]|\(\]|\\\)|\\\])", r"\1", s)
 
     # Xoá ngoặc rỗng triệt để các loại (kể cả có escape \)
     s = re.sub(r'\\left\(\s*\\right\)', '', s)
@@ -1126,7 +1148,8 @@ def _tidy(s: str) -> str:
 
 
     # Fix unescaped closing set brace e.g. \{k\pi \mid k \in \mathbb{Z}} -> \{k\pi \mid k \in \mathbb{Z}\}
-    if s.count(r"\{") > s.count(r"\}") and s.strip().endswith("}") and not s.strip().endswith(r"\}"):
+    # Same guard as above: the trailing } must be orphaned, not the closer of a group.
+    if s.count(r"\{") > s.count(r"\}") and trailing_close_is_orphan(s):
         s = s.strip()[:-1] + r"\}"
 
     # Strip extra trailing braces after \right.

@@ -639,18 +639,67 @@ Baseline hiện tại — 43 file `.docx`, 2.862 công thức duy nhất:
 
 `empty_macro_arg` 23 ca đều là `\overline{}` — gạch trên lơ lửng không nội dung, sinh từ selector `14` (`TM_OBAR`), đúng selector chưa khai báo fire nhiều nhất (52 lần). Các template trang trí một ô (`TM_OBAR`, `TM_UBAR`, `TM_VEC`, `TM_TILDE`, `TM_HAT`) nay trả về chuỗi rỗng khi ô rỗng, thay vì sinh macro rỗng. **23 → 1.**
 
-### 8.8 Chưa làm (theo lộ trình §5)
+### 8.8 Đợt 2 — và bài học về việc tin vào bộ đo của chính mình
+
+Tôi xếp `right_dot_brace` (38 ca) là ưu tiên 1. **Kiểm chứng bằng KaTeX cho thấy nó là dương tính giả hoàn toàn** — cả 5 biến thể đều render đạt:
+
+```
+{...\right.}   ĐẠT     {...\right. }  ĐẠT     \left\{...\right.  ĐẠT
+{...\right..\}} ĐẠT    {...\right.\}} ĐẠT
+```
+
+Các công thức bị gắn cờ đều dạng `{ \left\{ ... \right. }` — group bọc ngoài chứa cặp `\left...\right` hoàn chỉnh, tức LaTeX hợp lệ. Bất biến đã bị **xoá**. Kéo theo: chú thích trong `_tidy` ghi *"KaTeX requires delimiter space before group brace"* dựa trên **tiền đề sai**.
+
+Và một lỗi đo thứ ba: bộ thu của tôi bắt LaTeX **trước** khi `render_many` gọi `_wrap_bare_words`, tức không phải chuỗi KaTeX thật sự nhận. Sửa điểm đo: `viet_outside_text` **13 → 1**.
+
+> **Ba lần liên tiếp tôi đo sai theo cùng một kiểu:** đếm quá rộng (`stray_pipe` 56 → 9), gắn cờ thứ không phải lỗi (`right_dot_brace` 38 → 0), và đo sai điểm trong pipeline (`viet_outside_text` 13 → 1).
+>
+> Nguyên tắc rút ra: **mọi bất biến phải chứng minh được bằng một lỗi KaTeX thật hoặc một hại hiển thị thật, và phải đo đúng tại chuỗi KaTeX nhận.** Mọi bất biến nay có test dương + test âm trong [`tests/test_invariants.py`](tests/test_invariants.py).
+
+**Đã sửa trong đợt 2:**
+
+| Việc | Kết quả |
+|---|---|
+| Dải phân cách ĐÓNG của set template rò ra (` \|\}`) | `stray_pipe` **9 → 2** |
+| `\mathbb{Z\}}` — `\}` lọt vào đối số macro | **6 → 0** |
+
+Ca `\mathbb{Z\}}` là ví dụ sách giáo khoa của RC3a — **hai luật che lỗi của nhau**:
+
+1. Luật *escape ngoặc cuối* biến `\mathbb{Z}` → `\mathbb{Z\}`, rồi bộ cân bằng thêm `}` → `\mathbb{Z\}}`, render ra "Z}" thay vì "ℤ".
+2. Luật *dọn ngoặc mồ côi* lại **xoá `\}` hợp lệ** của tập hợp: `\{k\pi \mid k \in \mathbb{Z}\}` → `\{k\pi \mid k \in \mathbb{Z}`.
+
+Trước đây bug 1 tạo ra `\mathbb{Z\}` mà bug 2 không khớp được, nên chúng triệt tiêu nhau. Sửa bug 1 làm lộ bug 2 ngay. Nay: luật 1 chỉ escape khi `}` cuối **thật sự mồ côi** (`trailing_close_is_orphan`, dùng ngăn xếp), luật 2 bỏ `\}` khỏi danh sách hậu tố cần dọn. Cả hai được khoá bằng test.
+
+### 8.9 Bề mặt lỗi còn lại
+
+Trên 2.862 công thức duy nhất (43 file `.docx`):
+
+| Loại | Ca | Xử lý |
+|---|---:|---|
+| KaTeX lỗi cứng | 7 | `overrides.json` — hỏng nhiều lớp, hết suy diễn được |
+| `stray_pipe` | 2 | edge case đơn lẻ |
+| `viet_outside_text` | 1 | **không phải RC4** — font TCVN3 legacy trong 1 file Hoá |
+| `empty_macro_arg` | 1 | trong công thức hỏng nhiều lớp |
+| `spurious_pipe_style` | 27 | chỉ trình bày (`\|` → `\mid`) |
+| **Bắt buộc bằng 0** | **0** | `brace_imbalance`, `pua_chars`, `escaped_brace_in_macro` |
+
+Tổng lỗi thật ≈ **11/2.862 = 0,4%**. Ca `viet_outside_text` còn lại là `H¹tnh©n:chøaproton...` — font TCVN3 cũ, một lớp bug hoàn toàn khác, cần bảng chuyển mã TCVN3 → Unicode chứ không phải sửa math mode.
+
+### 8.10 Chưa làm (theo lộ trình §5)
 
 Xếp lại theo số đo mới, **không** theo phỏng đoán ban đầu:
 
 | Ưu tiên | Việc | Số ca | Ghi chú |
 |---|---|---:|---|
-| **1** | `right_dot_brace` — RC3 | **38** | Lớp lớn nhất còn lại. Cần khớp `\left`/`\right` ở tầng cây (§3.3) |
-| **2** | RC4 điều kiện 3 — validate bằng KaTeX trước khi promote | 13 | Biến promotion từ *đoán* thành *tự kiểm chứng* |
-| **3** | RC2 — bỏ `_SLOTS.get(sel, 1)`, thêm bất biến đếm `END` | 9 | `stray_pipe`; điều tra selector `37`, `33` |
-| **4** | `overrides.json` cho 7 ca KaTeX còn lại | 7 | Không viết thêm heuristic |
-| **5** | `spurious_pipe_style` → `\mid` | 33 | Chỉ là trình bày |
-| ~~RC1~~ | space-join ở decoder | **0** | **Hạ ưu tiên** — không còn biểu hiện (§8.6) |
+| **1** | `overrides.json` khoá theo `sha1(mtef_bytes)` cho 7 ca KaTeX | 7 | Không viết thêm heuristic |
+| **2** | Xuất **báo cáo lỗi nguồn** cho đội nội dung | ~80 | Sửa tại file Word là *chính xác*; heuristic mãi là *phỏng đoán* |
+| **3** | Bảng chuyển mã **TCVN3 → Unicode** | 1 file | Lớp bug riêng, không liên quan math mode |
+| **4** | Cổng 2 (không-thoái-triển) thành test thường trú | — | Hiện chạy thủ công; đây là cổng đã bắt bug `0 → 30` |
+| **5** | `spurious_pipe_style` → `\mid` | 27 | Chỉ là trình bày |
+| ~~`right_dot_brace`~~ | ~~RC3~~ | **0** | **Đã xoá** — dương tính giả (§8.8) |
+| ~~RC4~~ | luồng typed span | **1** | Coi như xong: bạn sửa `exercises.py` + `_wrap_bare_words` |
+| ~~RC1~~ | space-join ở decoder | **0** | Không còn biểu hiện (§8.6) |
+| ~~RC2~~ | bỏ `_SLOTS.get(sel, 1)` | **2** | Còn 2 edge case; bất biến đếm `END` vẫn nên làm cho tương lai |
 | ~~S2/S3~~ | parser LaTeX | — | **Chưa cần** — đã lấy 89% lợi ích mà không cần parser |
 
 **Cổng 2 (không-thoái-triển)** vẫn chưa thành test thường trú; hiện chạy thủ công cho từng thay đổi. Nên tự động hoá vì đây là cổng đã bắt được bug `0 → 30`.

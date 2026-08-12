@@ -22,8 +22,8 @@ from tools.check_invariants import (  # noqa: E402
     MUST_BE_ZERO,
     brace_imbalance,
     empty_macro_arg,
+    escaped_brace_in_macro,
     pua_chars,
-    right_dot_brace,
     spaced_digits,
     spaced_function_name,
     stray_pipe,
@@ -64,14 +64,14 @@ CASES = [
         ],
     ),
     (
-        right_dot_brace,
-        [r"\left\{ x \right.}", r"\right. }"],
-        [r"\left\{ x \right.", r"\left( a \right)", r"\right.\\"],
-    ),
-    (
         empty_macro_arg,
         [r"\overline{}", r"\sqrt{}", r"\frac{}", r"\sqrt[2]{}", r"\underline{}"],
         [r"\overline{AB}", r"\sqrt{2}", r"\frac{1}{2}", r"\sqrt[3]{8}"],
+    ),
+    (
+        escaped_brace_in_macro,
+        [r"\mathbb{Z\}}", r"\text{a\}}", r"\mathrm{X\}"],
+        [r"\mathbb{Z}", r"\{x \in \mathbb{Z}\}", r"\text{và}", r"\mathbb{R} \setminus \{k\pi\}"],
     ),
     (
         brace_imbalance,
