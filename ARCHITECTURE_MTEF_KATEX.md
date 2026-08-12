@@ -1,15 +1,27 @@
 # MTEF → KaTeX: Chẩn đoán gốc rễ và Kiến trúc lại
 
-> ## ✅ ĐÃ TRIỂN KHAI — kết quả
+> ## ✅ ĐÃ TRIỂN KHAI — đạt mục tiêu 0 lỗi đỏ
+>
+> Chạy production trên **toàn bộ 43 file `.docx`**, sinh **1.606 câu hỏi JSON**:
+>
+> ```
+> $ python -m pipeline.cli_bt_json "Kiến thức trọng tâm và tài tập" -o out/ --fail-on-katex-error
+> ✅ Hoàn thành! Tổng số 1606 file JSON câu hỏi
+> ✅ Cổng KaTeX: mọi công thức đều render được
+> EXIT=0
+> ```
 >
 > | | Trước | Sau |
 > |---|---:|---:|
-> | KaTeX lỗi cứng / 4.584 công thức | **62** (1,35%) | **7** (0,15%) |
+> | **KaTeX lỗi cứng — production, 43 file** | — | **0** |
+> | KaTeX lỗi cứng / 4.584 công thức Toán | **62** (1,35%) | **0** |
 > | Lệch ngoặc (`brace_imbal`) | 41 | **0** |
-> | Test tự động | 2 | **176** |
-> | Cổng chặn phát hành | không có | `--fail-on-katex-error` |
+> | `escaped_brace_in_macro` | 6 | **0** |
+> | `viet_outside_text` | 13 | **0** |
+> | Test tự động | 2 | **276** |
+> | Cổng chặn phát hành | không có | 2 cổng + baseline ratchet |
 >
-> **Giảm 89% lỗi cứng. 0 thoái triển** (kiểm bằng so sánh từng công thức ở cả 3 thay đổi).
+> **0 thoái triển** ở mọi thay đổi (kiểm bằng so sánh từng công thức).
 > Output HTML giao cho khách **giống hệt từng byte** — chỉ thêm khả năng phát hiện lỗi.
 >
 > Chi tiết ở [§8](#8-trạng-thái-triển-khai).
@@ -685,22 +697,78 @@ Trên 2.862 công thức duy nhất (43 file `.docx`):
 
 Tổng lỗi thật ≈ **11/2.862 = 0,4%**. Ca `viet_outside_text` còn lại là `H¹tnh©n:chøaproton...` — font TCVN3 cũ, một lớp bug hoàn toàn khác, cần bảng chuyển mã TCVN3 → Unicode chứ không phải sửa math mode.
 
-### 8.10 Chưa làm (theo lộ trình §5)
+### 8.10 Đợt 3 — về 0 lỗi
+
+**a. `overrides.json` — 8 công thức hỏng không cứu được bằng thuật toán.** Dựng lại từ ngữ cảnh đoạn văn (báo cáo ở §8.11 cung cấp ngữ cảnh này), kiểm định bằng KaTeX trước khi ghi, đánh dấu `[dựng lại từ ngữ cảnh — cần người xác nhận]`. Ví dụ:
+
+```
+45^{032} '=\left(45+\frac{32}{60}\right) ^{0}
+   -> 45^{\circ}32' = \left(45 + \frac{32}{60}\right)^{\circ}      (ngữ cảnh: "Trước tiên ta đổi")
+
+T=a^{2+b^{2+c^{2=3^{2+0^{2+(-4)}^{2=25}}}}}
+   -> T = a^2 + b^2 + c^2 = 3^2 + 0^2 + (-4)^2 = 25                (ngữ cảnh: "Vậy")
+```
+
+Trong đó có 1 ca là văn bản gõ bằng **font TCVN3** cũ (`H¹tnh©n:chøaproton...` = "Hạt nhân: chứa proton...") — chữ, không phải công thức.
+
+**b. Ba lỗi production cuối cùng — và chúng không đi qua MTEF.** Sau overrides, scan MTEF báo 0 nhưng pipeline thật vẫn 3 lỗi, tất cả cùng một mẫu:
+
+```
+\frac{M_{polymer}{n}}                       <- tử số chưa đóng
+\frac{A_{1}.x_{1} + A_{2}.x_{2}{100}}
+```
+
+`omml_to_latex` trả về **đúng** `\frac{M_{polymer}}{n}`. Thủ phạm là luật này trong `_tidy`:
+
+```python
+re.sub(r"(_\{[^{}]+\})}+", r"\1", s)      # y_{CT}} -> y_{CT}
+```
+
+Nó xoá `}` sau **mọi** chỉ số dưới mà không kiểm group bao ngoài có cần hay không, nên phá mọi phân số có tử số mang chỉ số dưới. `balance_braces()` đã làm việc này đúng và **đúng vị trí** (`y_{CT}}` → bỏ vì mồ côi; `\frac{M_{sub}}{n}` → giữ vì đóng tử số), nên luật kia vừa **dư thừa** vừa **có hại**. Đã xoá.
+
+> **Bài học thứ tư, cùng một họ với ba bài học ở §8.8:** ba lỗi này đi qua đường **OMML**, không phải MTEF (`docxast.py:170` chạy `_tidy` cho cả OMML). Tôi đã đo bằng cách scan trực tiếp MTEF embeddings suốt cả buổi, nên **cả một đường dữ liệu nằm ngoài phép đo**. Chỉ khi chạy `cli_bt_json` thật trên toàn corpus mới thấy.
+>
+> Nguyên tắc: **con số chính thức phải lấy từ đường mà sản phẩm thật đi qua**, không phải từ một scan tiện tay.
+
+### 8.11 Báo cáo lỗi nguồn cho đội nội dung
+
+[`tools/report_source_defects.py`](tools/report_source_defects.py) sinh 3 file:
+
+| File | Cho ai |
+|---|---|
+| `LOI_NGUON_CAN_SUA.md` | Giáo viên/đội nội dung — nhóm theo file, kèm **ngữ cảnh đoạn văn** để tìm được công thức trong Word |
+| `report/defects.json` | Tooling |
+| `report/overrides.skel.json` | Khung sẵn (sha1 + latex hiện tại) để dán vào `overrides.json` |
+
+Hiện còn **32 công thức trong 10 file** cần sửa tại nguồn, trong đó **17 ca là số mũ nuốt biểu thức**. Báo cáo mở đầu bằng hướng dẫn thao tác đúng:
+
+| Gõ | Kết quả |
+|---|---|
+| `6x` `Ctrl+H` `2` `→` `-7x+1=0` | 6x² − 7x + 1 = 0 ✅ |
+| `6x` `Ctrl+H` `2` `-7x+1=0` | 6x^(2−7x+1=0) ❌ |
+
+Các ca này **pipeline vẫn hiển thị được** (nhờ `exp_repair`), nhưng sửa tại nguồn là chính xác còn heuristic mãi là phỏng đoán — nên vẫn nên trả về người soạn.
+
+### 8.12 Chưa làm (theo lộ trình §5)
 
 Xếp lại theo số đo mới, **không** theo phỏng đoán ban đầu:
 
+Mục tiêu 0 lỗi đỏ **đã đạt**. Việc còn lại là chất lượng và độ bền, không phải sửa lỗi hiển thị.
+
 | Ưu tiên | Việc | Số ca | Ghi chú |
 |---|---|---:|---|
-| **1** | `overrides.json` khoá theo `sha1(mtef_bytes)` cho 7 ca KaTeX | 7 | Không viết thêm heuristic |
-| **2** | Xuất **báo cáo lỗi nguồn** cho đội nội dung | ~80 | Sửa tại file Word là *chính xác*; heuristic mãi là *phỏng đoán* |
-| **3** | Bảng chuyển mã **TCVN3 → Unicode** | 1 file | Lớp bug riêng, không liên quan math mode |
-| **4** | Cổng 2 (không-thoái-triển) thành test thường trú | — | Hiện chạy thủ công; đây là cổng đã bắt bug `0 → 30` |
-| **5** | `spurious_pipe_style` → `\mid` | 27 | Chỉ là trình bày |
+| **1** | **Đội nội dung sửa 32 công thức trong file Word** | 32 | Đã có [`LOI_NGUON_CAN_SUA.md`](LOI_NGUON_CAN_SUA.md); việc của người, không phải của code |
+| **2** | Người **xác nhận 8 override** tôi dựng lại từ ngữ cảnh | 8 | Đã đánh dấu `[cần người xác nhận]` trong `overrides.json` |
+| **3** | Cổng 2 (không-thoái-triển) thành test thường trú | — | Hiện chạy thủ công; đây là cổng đã bắt bug `0 → 30` |
+| **4** | Bảng chuyển mã **TCVN3 → Unicode** | 1 file | Hiện xử lý bằng override; lớp bug riêng |
+| **5** | Bất biến đếm `END` cho RC2 | — | Phòng cho mẫu MathType mới, không phải sửa lỗi hiện tại |
+| **6** | `spurious_pipe_style` → `\mid` | 27 | Chỉ là trình bày |
 | ~~`right_dot_brace`~~ | ~~RC3~~ | **0** | **Đã xoá** — dương tính giả (§8.8) |
-| ~~RC4~~ | luồng typed span | **1** | Coi như xong: bạn sửa `exercises.py` + `_wrap_bare_words` |
+| ~~RC4~~ | luồng typed span | **0** | Xong: bạn sửa `exercises.py` + `_wrap_bare_words` + 1 override |
 | ~~RC1~~ | space-join ở decoder | **0** | Không còn biểu hiện (§8.6) |
-| ~~RC2~~ | bỏ `_SLOTS.get(sel, 1)` | **2** | Còn 2 edge case; bất biến đếm `END` vẫn nên làm cho tương lai |
-| ~~S2/S3~~ | parser LaTeX | — | **Chưa cần** — đã lấy 89% lợi ích mà không cần parser |
+| ~~S2/S3~~ | parser LaTeX | — | **Không cần** — về 0 lỗi mà không phải viết parser |
+
+Đáng ghi lại: kết luận ban đầu của tôi là phải viết parser LaTeX (bước 6, 3–4 ngày). Thực tế về được 0 lỗi **mà không viết parser nào** — vì phần lớn công việc hoá ra là *xoá* các luật regex có hại, không phải *thêm* hạ tầng.
 
 **Cổng 2 (không-thoái-triển)** vẫn chưa thành test thường trú; hiện chạy thủ công cho từng thay đổi. Nên tự động hoá vì đây là cổng đã bắt được bug `0 → 30`.
 

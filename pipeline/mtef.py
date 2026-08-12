@@ -893,8 +893,17 @@ def _tidy(s: str) -> str:
     s = re.sub(r"\b(y|f|x)(ct|CT)\b", r"\1_{CT}", s)
     s = re.sub(r"\b(y|f|x)(cd|CD|CĐ)\b", r"\1_{CĐ}", s)
 
-    # Strip extra trailing braces from MTEF subscript artifacts like y_{CT}} -> y_{CT}
-    s = re.sub(r"(_\{[^{}]+\})}+", r"\1", s)
+    # REMOVED: re.sub(r"(_\{[^{}]+\})}+", r"\1", s)   # y_{CT}} -> y_{CT}
+    #
+    # This stripped a } after any subscript without checking whether an enclosing
+    # group needed it, so it broke every fraction with a subscripted numerator:
+    #     \frac{M_{polymer}}{n}  ->  \frac{M_{polymer}{n}  ->  \frac{M_{polymer}{n}}
+    # These were the last 3 KaTeX failures in production, and they came through the
+    # OMML path (docxast.py:170 runs _tidy on OMML output too), not through MTEF.
+    #
+    # balance_braces() already does this correctly and positionally: in y_{CT}} the
+    # trailing } is a genuine orphan and gets dropped, while in \frac{M_{sub}}{n} it
+    # closes the numerator and is kept. The rule was redundant as well as harmful.
 
     # Fix MathType misparsed k 360^deg, k 180^deg, k 2pi (e.g. k_{360}^{\circ}, k_{180}^{\circ}, k_{2}\pi)
     s = re.sub(r"k_\{?(360|180)\}?\^?\{?(?:°|\\circ|0)\}?", r"k \1^{\\circ}", s)
