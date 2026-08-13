@@ -35,5 +35,49 @@
   "31aa7a350f6040ce3aaa46e7fff5d49da927abfd": {
     "latex": "T = a^2 + b^2 + c^2 = 3^2 + 0^2 + (-4)^2 = 25",
     "note": "Toán 12 Bài 4 — số mũ nuốt biểu thức lồng 5 tầng"
+  },
+  "1c72eb066963c19395f76b4de91c40a83277cace": {
+    "latex": "(Ox, Oy) = 1822^{\\circ}30' \\to 22^{\\circ}30' + k \\cdot 360^{\\circ} = 1822^{\\circ}30' \\to k = 5",
+    "note": "Toán 11 Bài 1 — góc 1822°30'; kiểm: 22°30' + 5·360° = 1822°30' [dựng lại từ ngữ cảnh — cần người xác nhận]"
+  },
+  "fb30c959e54d0fa285bc2790c1d4d2713317cd08": {
+    "latex": "\\sin^2 \\alpha + \\cos^2 \\alpha = 1",
+    "note": "Toán 11 Bài 2 — hệ thức lượng giác cơ bản [dựng lại từ ngữ cảnh — cần người xác nhận]"
+  },
+  "77b42502af7661e9e26198de12660ba52e393271": {
+    "latex": "M = \\cos^4 15^{\\circ} - \\sin^4 15^{\\circ}.",
+    "note": "Toán 11 Bài 2 Câu 21 — rút gọn biểu thức [dựng lại từ ngữ cảnh — cần người xác nhận]"
+  },
+  "1a388ae55d8b3cebd12584509655cf985005b8ed": {
+    "latex": "= \\left(\\cos^2 15^{\\circ} - \\sin^2 15^{\\circ}\\right)\\left(\\cos^2 15^{\\circ} + \\sin^2 15^{\\circ}\\right)",
+    "note": "Toán 11 Bài 2 — phân tích hiệu hai bình phương [dựng lại từ ngữ cảnh — cần người xác nhận]"
+  },
+  "f90f11d8b8df83440caa35314f019e4fbab05fcc": {
+    "latex": "= \\cos^2 15^{\\circ} - \\sin^2 15^{\\circ} = \\cos\\left(2 \\cdot 15^{\\circ}\\right) = \\cos 30^{\\circ} = \\frac{\\sqrt{3}}{2}",
+    "note": "Toán 11 Bài 2 — công thức nhân đôi; kiểm: cos30° = √3/2 [dựng lại từ ngữ cảnh — cần người xác nhận]"
+  },
+  "72bce1f1db62c946ff23e9d7addd034dd841c1ba": {
+    "latex": "M = \\cos^4 15^{\\circ} - \\sin^4 15^{\\circ} + \\cos^2 15^{\\circ} - \\sin^2 15^{\\circ}",
+    "note": "Toán 11 Bài 2 Câu 37 — tính giá trị biểu thức [dựng lại từ ngữ cảnh — cần người xác nhận]"
+  },
+  "af3b70b9d9b9b0199ceac558b710b5ce9598635f": {
+    "latex": "M = \\left(\\cos^4 15^{\\circ} - \\sin^4 15^{\\circ}\\right) + \\left(\\cos^2 15^{\\circ} - \\sin^2 15^{\\circ}\\right)",
+    "note": "Toán 11 Bài 2 Câu 37 — nhóm hạng tử [dựng lại từ ngữ cảnh — cần người xác nhận]"
+  },
+  "8348feb91cc005d4db46b724b5bdd5c0999f0738": {
+    "latex": "= \\left(\\cos^2 15^{\\circ} - \\sin^2 15^{\\circ}\\right)\\left(\\cos^2 15^{\\circ} + \\sin^2 15^{\\circ}\\right) + \\left(\\cos^2 15^{\\circ} - \\sin^2 15^{\\circ}\\right)",
+    "note": "Toán 11 Bài 2 Câu 37 — phân tích [dựng lại từ ngữ cảnh — cần người xác nhận]"
+  },
+  "7566a1f6b7598edf2e9dc1cc27e4326148b67a90": {
+    "latex": "= \\left(\\cos^2 15^{\\circ} - \\sin^2 15^{\\circ}\\right) + \\left(\\cos^2 15^{\\circ} - \\sin^2 15^{\\circ}\\right) = \\cos 30^{\\circ} + \\cos 30^{\\circ} = \\sqrt{3}",
+    "note": "Toán 11 Bài 2 Câu 37 — kết quả; kiểm: 2cos30° = √3 [dựng lại từ ngữ cảnh — cần người xác nhận]"
+  },
+  "7ea5bfd9f412fe8ce80c8cba52fdac8c73b6760e": {
+    "latex": "g'(x) = \\left[f(x) + 1\\right]' = f'(x)",
+    "note": "Toán 12 Bài 1 ý c — đạo hàm của f(x)+1 [dựng lại từ ngữ cảnh — cần người xác nhận]"
+  },
+  "d81f1d0babffafc45cf3111e5180b2b2b6f6e5b1": {
+    "latex": "P = 2 \\cdot 0^2 - 8^2 = -64",
+    "note": "Toán 12 Bài 1 — kiểm: 0 - 64 = -64 [dựng lại từ ngữ cảnh — cần người xác nhận]"
   }
 }
