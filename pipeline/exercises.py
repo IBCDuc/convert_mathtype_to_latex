@@ -265,6 +265,75 @@ def _render_text(paras: list[Block], assets, q_order: int = 1, img_collector: di
     return "\n\n".join(lines) or None
 
 
+_NEXT_LETTER = {"A": "B", "B": "C", "C": "D"}
+
+
+def _pull_options_from_head(inlines: list[Inline]) -> tuple[list[Inline], list[Inline]]:
+    """Tách phần phương án bị gõ DÍNH vào đoạn câu hỏi.
+
+    Có câu mà tác giả gõ đề và phương án trong cùng một đoạn::
+
+        Trong các đẳng thức sau, ... cơ bản? A. sin a + cos a = 1 B. sin^2 a ...
+
+    Khi đó A và B nằm trong phần đề, chỉ C và D được nhận là phương án — câu chỉ
+    còn 2 lựa chọn và đáp án trỏ sai ô.
+
+    Chỉ cắt khi thấy ĐỦ CẢ ``A.`` LẪN ``B.``; một chữ "A." lẻ trong câu chữ bình
+    thường sẽ không đủ điều kiện. Trả về ``(phần_đề, phần_phương_án)``.
+    """
+    for idx, inl in enumerate(inlines):
+        if inl.kind != "text":
+            continue
+        m = re.search(r"(?<![A-Za-z0-9])A[.)](?:\s|$)", inl.text)
+        if not m:
+            continue
+        rest = inl.text[m.start():]
+        tail_text = rest + "".join(
+            i.text for i in inlines[idx + 1:] if i.kind == "text")
+        if not re.search(r"(?<![A-Za-z0-9])B[.)](?:\s|$)", tail_text):
+            continue
+        stem = inlines[:idx]
+        before = inl.text[:m.start()]
+        if before.strip():
+            stem = stem + [Inline("text", before, bold=inl.bold,
+                                  color=inl.color, underline=inl.underline)]
+        opts = [Inline("text", rest, bold=inl.bold, color=inl.color,
+                       underline=inl.underline)] + list(inlines[idx + 1:])
+        return stem, opts
+    return inlines, []
+
+
+def _split_inline_markers(text: str, cur_letter: str) -> list[tuple[str | None, str]]:
+    """Cắt phần text còn lại theo các nhãn phương án nằm GIỮA run.
+
+    Trả về [(letter|None, đoạn_text)] theo đúng thứ tự. ``letter=None`` nghĩa là
+    đoạn đó vẫn thuộc phương án đang mở.
+
+    Chỉ cắt khi gặp đúng chữ cái KẾ TIẾP (A->B->C->D). Ràng buộc này là thứ giữ
+    cho luật an toàn: một chữ "B." lạc trong câu chữ sẽ không cắt được vì lúc đó
+    chương trình đang chờ chữ khác.
+    """
+    out: list[tuple[str | None, str]] = []
+    letter = cur_letter
+    while True:
+        nxt = _NEXT_LETTER.get(letter)
+        if not nxt:
+            break
+        m = re.search(rf"(?<![A-Za-z0-9]){nxt}[.)](?:\s|$)", text)
+        if not m:
+            break
+        out.append((None, text[:m.start()]))
+        text = text[m.end():]
+        letter = nxt
+        out.append((letter, ""))
+    if text:
+        if out and out[-1][0] is not None:
+            out[-1] = (out[-1][0], text)
+        else:
+            out.append((None, text))
+    return out
+
+
 def _split_choices(paras: list[Block]) -> list[Choice]:
     choices: list[Choice] = []
     leading: list[Inline] = []   # nội dung đứng trước marker đầu tiên (nếu có)
@@ -280,8 +349,29 @@ def _split_choices(paras: list[Block]) -> list[Choice]:
                 skip_punct = False
                 rest = inl.text[m.end():]
                 if rest:
-                    cur.items.append(Inline("text", rest, bold=inl.bold,
-                                             color=inl.color, underline=inl.underline))
+                    # Nhãn phương án không phải lúc nào cũng mở đầu một run: có
+                    # câu gõ cả bốn phương án trong CÙNG một run —
+                    #     "A. sin a + cos a = 1 B. sin^2 a + cos^2 a = 1 C. ..."
+                    # Bản cũ chỉ khớp nhãn ở ĐẦU run nên chỉ tách được A, phần
+                    # còn lại dồn hết vào A; câu chỉ còn 1 lựa chọn và đáp án B
+                    # trỏ tới id không tồn tại.
+                    #
+                    # Chỉ cắt tại chữ cái ĐÚNG BẰNG chữ kế tiếp (A->B->C->D) để
+                    # không cắt nhầm những "B." xuất hiện tự nhiên trong câu chữ.
+                    for letter, seg in _split_inline_markers(rest, cur.letter):
+                        if letter is None:
+                            if seg:
+                                cur.items.append(Inline("text", seg, bold=inl.bold,
+                                                        color=inl.color,
+                                                        underline=inl.underline))
+                        else:
+                            cur = Choice(letter=letter, bold=inl.bold,
+                                         color=inl.color, underline=inl.underline)
+                            choices.append(cur)
+                            if seg:
+                                cur.items.append(Inline("text", seg, bold=inl.bold,
+                                                        color=inl.color,
+                                                        underline=inl.underline))
                 continue
             m2 = RE_BARE_LETTER.match(inl.text) if inl.bold else None
             if m2:
@@ -610,11 +700,16 @@ def _build_question_json(stem_first: list[Block], stem_rest_text: str, body: lis
     math_dict = math_dict or {}
 
     head_inlines = _trim_question_prefix(stem_first[0]) if stem_first else []
+    # Phương án gõ dính vào đoạn câu hỏi thì phải kéo ra trước khi dựng nội dung,
+    # nếu không chúng nằm lại trong đề và đáp án trỏ sai ô (xem _pull_options_from_head).
+    head_inlines, spilled_opts = _pull_options_from_head(head_inlines)
+    if spilled_opts:
+        opt_paras = [Block(kind="para", inlines=spilled_opts)] + list(opt_paras)
     head_html = f"<p>{_render_para(head_inlines, assets, math_dict)}</p>" if head_inlines else ""
     stem_html = _render(stem_paras, assets, math_dict) or ""
     content_html = "\n".join(x for x in [head_html, stem_html] if x)
 
-    choices = _split_choices(opt_paras) if opt_start is not None else []
+    choices = _split_choices(opt_paras) if (opt_start is not None or spilled_opts) else []
     choices_list = None
     if choices:
         choices_list = []
