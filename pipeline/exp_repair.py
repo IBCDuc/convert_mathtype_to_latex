@@ -176,14 +176,32 @@ def _match_closing_brace(s: str, start: int) -> int:
     return -1
 
 
+_MAX_PASSES = 5
+
+
 def repair_swallowed_exponent(latex: str) -> tuple[str, list[RepairNote]]:
     """Sửa các ô số mũ đã "nuốt" phần còn lại của biểu thức.
 
     Trả về ``(latex_đã_sửa, notes)``. Nếu không có gì đáng sửa thì trả về
     nguyên bản và ``notes`` rỗng — hàm này an toàn để gọi trên mọi công thức.
 
-    Idempotent: gọi lại trên kết quả không làm thay đổi thêm.
+    Lặp tới ĐIỂM BẤT ĐỘNG: số mũ hỏng có thể lồng nhau, và một ô chỉ lộ ra sau
+    khi ô bao ngoài được tách. Ví dụ ``\\cos 6a=\\cos^{23a-\\sin^{23a=2}}`` cần
+    hai lượt — lượt đầu tách ``\\cos``, lượt sau mới thấy ``\\sin`` bên trong.
+    Nhờ vòng lặp này hàm giữ được tính idempotent với người gọi.
     """
+    notes: list[RepairNote] = []
+    for _ in range(_MAX_PASSES):
+        out, new_notes = _repair_once(latex)
+        notes.extend(new_notes)
+        if out == latex:
+            break
+        latex = out
+    return latex, notes
+
+
+def _repair_once(latex: str) -> tuple[str, list[RepairNote]]:
+    """Một lượt quét. Xem repair_swallowed_exponent() cho vòng lặp hội tụ."""
     notes: list[RepairNote] = []
     out: list[str] = []
     i = 0
@@ -209,12 +227,31 @@ def repair_swallowed_exponent(latex: str) -> tuple[str, list[RepairNote]]:
         recurs = bool(_base_atom_vars(base) & _vars_of(sup)) if base else False
 
         # ---- trigger: cần tín hiệu rõ ràng, và cần có chỗ để cắt ----
-        if not ((has_rel and add_at > 0) or (add_at > 0 and recurs)):
+        # Quan hệ trong ô số mũ là tín hiệu đủ mạnh, KHÔNG cần thêm toán tử +/-:
+        # ``2x-3y^{3>0}`` có quan hệ nhưng không có +/- nào để cắt, nên bản đầu bỏ
+        # sót và công thức vẫn hiện sai trên web. Điểm cắt là ngay sau số mũ tối
+        # thiểu, không phải tại toán tử cộng trừ.
+        # Cơ số là hàm mà số mũ mở đầu bằng HAI chữ số -> chắc chắn bị nuốt:
+        # \cos^{23a...} không tồn tại trong toán phổ thông, đó là \cos^2 3a.
+        func_two_digit = (
+            _immediate_base_atom(base).startswith("\\")
+            and re.match(r"\s*\d\d", sup) is not None
+        )
+
+        if not (has_rel or func_two_digit or (add_at > 0 and recurs)):
             out.append(latex[i:end])
             i = end
             continue
 
-        me = _MINIMAL_EXP_RE.match(sup)
+        # Cơ số là HÀM (\sin, \cos, \tan...) thì số mũ luôn là MỘT chữ số:
+        # \cos^2 3a, \sin^2 \alpha. Lấy dãy số dài nhất sẽ đọc \cos^{23a-...}
+        # thành \cos^{23} a (cos²³a) trong khi đúng là \cos^2 3a.
+        # Với cơ số thường thì số mũ nhiều chữ số là hợp lệ (x^{10-3x=0}).
+        base_atom = _immediate_base_atom(base)
+        if base_atom.startswith("\\"):
+            me = re.match(r"^\s*([+-]?\s*(?:\d|\\[a-zA-Z]+|[a-zA-Z]))", sup)
+        else:
+            me = _MINIMAL_EXP_RE.match(sup)
         if not me:
             notes.append(RepairNote(f"quarantine:no_minimal_exp:{sup[:48]}"))
             out.append(latex[i:end])
@@ -225,6 +262,15 @@ def repair_swallowed_exponent(latex: str) -> tuple[str, list[RepairNote]]:
         rest = sup[me.end():].strip()
 
         if not rest:
+            out.append(latex[i:end])
+            i = end
+            continue
+
+        # Phần còn lại mở đầu bằng dấu phẩy trên (phút/giây góc, hoặc đạo hàm) sẽ
+        # nằm ngay sau số mũ vừa tách và trở thành số mũ THỨ HAI trên cùng một cơ
+        # số -> KaTeX báo "Double superscript".  Ví dụ 1822^{030'\to ...}
+        if rest.lstrip().startswith(("'", "′", r"\prime")):
+            notes.append(RepairNote(f"quarantine:prime_after_exp:{sup[:48]}"))
             out.append(latex[i:end])
             i = end
             continue

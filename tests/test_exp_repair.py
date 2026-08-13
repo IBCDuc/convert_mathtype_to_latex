@@ -28,6 +28,12 @@ MUST_REPAIR = [
     (r"y=x^{3-3x^{2}+2}",              "^{3}"),
     (r"\sin^{2\alpha+\cos^2\alpha=1}", "^{2}"),
     (r"2x^{2+y<-3}",                   "^{2}"),
+    # Quan hệ trong ô số mũ là đủ, KHÔNG cần thêm toán tử +/- để có chỗ cắt
+    (r"2x-3y^{3>0}",                   "^{3}"),
+    (r"\cos ^{2x=0}",                  "^{2}"),
+    (r"0\le \cos ^{2x\le 1\to M=2}",   "^{2}"),
+    # Cơ số là hàm thì số mũ là MỘT chữ số: \cos^{23a} = \cos^2 3a, không phải cos^23 a
+    (r"\cos 6a= \cos ^{23a- \sin ^{23a=2}}", "^{2}"),
 ]
 
 # --------------------------------------------------------------------------
@@ -50,6 +56,10 @@ MUST_NOT_TOUCH = [
     r"x^{2}+3x+2=0", r"6x^{2}-7x+1=0",
     # tổng/tích
     r"\sum_{i=1}^{n} x_i", r"\prod_{k=1}^{n} a_k",
+    # số mũ nhiều chữ số HỢP LỆ khi cơ số không phải hàm
+    r"2^{10}", r"x^{12}", r"10^{15}",
+    # dấu phẩy trên (phút/giây góc) ngay sau số mũ -> double superscript, phải bỏ qua
+    r"1822^{030'}",
 ]
 
 

@@ -59,12 +59,25 @@ def _scan_file(path: pathlib.Path) -> list[dict]:
     # Chặn decode_ole để lấy sha1 của blob — Asset.data chỉ chứa ảnh preview,
     # không phải OLE blob, nên không lấy được sha1 từ asset.
     sha_of: dict[str, str] = {}
+    raw_of: dict[str, str] = {}
     original = mtef.decode_ole
 
     def spy(blob: bytes):
         latex, source = original(blob)
         if latex:
             sha_of.setdefault(latex, hashlib.sha1(blob).hexdigest())
+            # Giải mã lần hai với exp_repair TẮT, để biết công thức nào đã được
+            # pipeline TỰ ĐOÁN. Sau khi sửa, dấu vết biến mất — nếu không đối
+            # chiếu thế này thì đúng những ca đáng ngờ nhất lại vắng mặt trong
+            # báo cáo, vì chúng đã "trông ổn".
+            saved = mtef.repair_swallowed_exponent
+            mtef.repair_swallowed_exponent = lambda s: (s, [])
+            try:
+                raw, _ = original(blob)
+            finally:
+                mtef.repair_swallowed_exponent = saved
+            if raw and raw != latex:
+                raw_of[latex] = raw
         return latex, source
 
     mtef.decode_ole = spy
@@ -90,6 +103,7 @@ def _scan_file(path: pathlib.Path) -> list[dict]:
                 # override theo sha1 KHÔNG áp dụng được.
                 "sha1": sha_of.get(asset.latex, ""),
                 "source": asset.source,
+                "raw": raw_of.get(asset.latex, ""),
                 "latex": asset.latex,
                 "context": context,
                 "para": block.para_index,
@@ -135,6 +149,9 @@ def main() -> int:
         # Số mũ nuốt biểu thức: dấu hiệu là quan hệ nằm trong ô số mũ
         if re.search(r"\^\s*\{[^{}]*[=<>][^{}]*\}", rec["latex"]):
             rec["defects"].append("swallowed_exponent")
+        # Pipeline đã tự đoán -> hiển thị SẠCH nhưng có thể sai toán học.
+        if rec.get("raw"):
+            rec["defects"].append("auto_repaired_exponent")
 
     bad = [r for r in records if r["katex_error"] or r["defects"]]
     a.out.mkdir(parents=True, exist_ok=True)
@@ -185,6 +202,10 @@ def main() -> int:
             lines.append(f"  - Công thức đọc được: `{r['latex'][:180]}`")
             if r["katex_error"]:
                 lines.append(f"  - ❌ Không hiển thị được: {r['katex_error'][:120]}")
+            if r.get("raw"):
+                lines.append(f"  - ⚠️ **Pipeline đã tự đoán** — hiển thị sạch nhưng có thể SAI:")
+                lines.append(f"    - trong file Word: `{r['raw'][:150]}`")
+                lines.append(f"    - web đang hiện : `{r['latex'][:150]}`")
             if r["defects"]:
                 lines.append(f"  - Dấu hiệu: {', '.join(sorted(set(r['defects'])))}")
             if r["sha1"]:
@@ -216,6 +237,7 @@ def main() -> int:
     print(f"cần sửa tại nguồn    : {len(bad)}  (trong {len(by_file)} file)")
     print(f"  - KaTeX lỗi cứng   : {sum(1 for r in bad if r['katex_error'])}")
     print(f"  - số mũ nuốt bt    : {sum(1 for r in bad if 'swallowed_exponent' in r['defects'])}")
+    print(f"  - pipeline TỰ ĐOÁN : {sum(1 for r in bad if 'auto_repaired_exponent' in r['defects'])}  <-- cần người xác nhận")
     print(f"\nĐã ghi: {a.out}/defects.md, defects.json, overrides.skel.json")
     return 0
 

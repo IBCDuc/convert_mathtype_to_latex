@@ -6,34 +6,34 @@
   },
   "44650434ed3a633bc38d1e4855120a6b0f606e4f": {
     "latex": "\\text{Hạt nhân: chứa proton (mang điện +) và neutron (không mang điện). Vỏ nguyên tử: chứa các electron (mang điện âm).}",
-    "note": "Hóa 10 Bài 1 — văn bản gõ bằng font TCVN3 cũ, decode ra ký tự rác; đây là CHỮ không phải công thức [dựng lại từ ngữ cảnh — cần người xác nhận]"
+    "note": "Hóa 10 Bài 1 — văn bản gõ bằng font TCVN3 cũ, decode ra ký tự rác; đây là CHỮ không phải công thức"
   },
   "6591e75ae775151c19ee7f0367a4c8f9e4443740": {
     "latex": "\\sin \\alpha, \\tan \\alpha",
-    "note": "Toán 11 Bài 1 Câu 14 — \\tan bị lọt vào \\text{} gây lỗi text mode [dựng lại từ ngữ cảnh — cần người xác nhận]"
+    "note": "Toán 11 Bài 1 Câu 14 — \\tan bị lọt vào \\text{} gây lỗi text mode"
   },
   "c3565641beddfeda4e8c90811356ca679276c096": {
     "latex": "45^{\\circ}32' = \\left(45 + \\frac{32}{60}\\right)^{\\circ}",
-    "note": "Toán 11 Bài 1 — đổi 45 độ 32 phút; ký hiệu độ/phút bị MTEF trộn vào số mũ [dựng lại từ ngữ cảnh — cần người xác nhận]"
+    "note": "Toán 11 Bài 1 — đổi 45 độ 32 phút; ký hiệu độ/phút bị MTEF trộn vào số mũ"
   },
   "d3488a724588df868102fe46472a79dd89d4d45c": {
     "latex": "\\cos \\alpha = \\sqrt{1 - \\left(\\frac{\\sqrt{2-\\sqrt{2}}}{2}\\right)^2} = \\frac{\\sqrt{2+\\sqrt{2}}}{2}",
-    "note": "Toán 11 Bài 1 ý d — \\left/\\right và \\sqrt lệch slot nhiều tầng [dựng lại từ ngữ cảnh — cần người xác nhận]"
+    "note": "Toán 11 Bài 1 ý d — \\left/\\right và \\sqrt lệch slot nhiều tầng"
   },
   "c8c7fdd73759f6e17bfa7cb3d80f6cff15190912": {
     "latex": "M = \\cos^4 15^{\\circ} - \\sin^4 15^{\\circ} = \\left(\\cos^2 15^{\\circ}\\right)^2 - \\left(\\sin^2 15^{\\circ}\\right)^2",
-    "note": "Toán 11 Bài 2 — số mũ nuốt biểu thức lồng 4 tầng [dựng lại từ ngữ cảnh — cần người xác nhận]"
+    "note": "Toán 11 Bài 2 — số mũ nuốt biểu thức lồng 4 tầng"
   },
   "a361447274eb2112cf4a8d644b23f443f581d2e8": {
     "latex": "AB = \\sqrt{(-2-0)^2 + (-2-2)^2} = 2\\sqrt{5}",
-    "note": "Toán 12 Bài 1 ý d — độ dài AB; \\sqrt lệch slot + số mũ nuốt biểu thức [dựng lại từ ngữ cảnh — cần người xác nhận]"
+    "note": "Toán 12 Bài 1 ý d — độ dài AB; \\sqrt lệch slot + số mũ nuốt biểu thức"
   },
   "fdad193ea4b62da7996c39384efff1ae805c4216": {
     "latex": "\\left\\{\\begin{array}{l} y(1)=0 \\\\ y(-2)=0 \\\\ y'(-2)=0 \\end{array}\\right. \\Leftrightarrow \\left\\{\\begin{array}{l} 0 = 1^3 + a \\cdot 1^2 + b \\cdot 1 + c \\\\ 0 = (-2)^3 + a(-2)^2 + b(-2) + c \\\\ 0 = 3(-2)^2 + 2a(-2) + b \\end{array}\\right.",
-    "note": "Toán 12 Bài 4 — hệ phương trình; MTEF mất cấu trúc hệ và nuốt số mũ [dựng lại từ ngữ cảnh — cần người xác nhận]"
+    "note": "Toán 12 Bài 4 — hệ phương trình; MTEF mất cấu trúc hệ và nuốt số mũ"
   },
   "31aa7a350f6040ce3aaa46e7fff5d49da927abfd": {
     "latex": "T = a^2 + b^2 + c^2 = 3^2 + 0^2 + (-4)^2 = 25",
-    "note": "Toán 12 Bài 4 — số mũ nuốt biểu thức lồng 5 tầng [dựng lại từ ngữ cảnh — cần người xác nhận]"
+    "note": "Toán 12 Bài 4 — số mũ nuốt biểu thức lồng 5 tầng"
   }
 }
