@@ -477,10 +477,22 @@ class MTEFParser:
                 else:
                     out.append(rows[0])
             elif rec == MATRIX:
-                if opt & xfRULER:
-                    self.skip_ruler()
-                v_align = self.u8()
-                h_align = self.u8()
+                # MATRIX = options(1) [nudge(4)] valign(1) h_just(1) v_just(1)
+                #          rows(1) cols(1) row_parts col_parts, rồi rows*cols ô.
+                #
+                # row_parts/col_parts là mảng BIT: 2 bit cho mỗi đường phân vùng,
+                # có rows+1 (và cols+1) đường -> ceil((n+1)/4) byte.
+                #
+                # Bản cũ bỏ qua byte options và cả v_just, nên đọc lệch 2 byte và
+                # lấy ra rows=0, cols=1 cho ma trận 2×1 thật — ma trận vì thế bị
+                # coi là một ô đơn và nội dung các hàng trôi ra ngoài.
+                # MTEF-py cũng sai chỗ này: nó không đọc row_parts/col_parts.
+                m_opt = self.u8()
+                if m_opt & OPT_NUDGE:
+                    self.i += 4
+                self.u8()          # valign
+                self.u8()          # h_just
+                self.u8()          # v_just
                 rows = self.u8()
                 cols = self.u8()
                 # rowParts/colParts không phải 1 byte/phần tử (như code cũ
@@ -488,17 +500,21 @@ class MTEFParser:
                 # sentinel 0xF, giống cách EQN_PREFS lưu sizes/spacing. Nhảy
                 # sai số byte khiến con trỏ rơi vào slack/"Root Entry" của
                 # OLE Compound File phía sau, sinh ra hàng chục cột rỗng.
-                if rows > 20 or cols > 20:
+                if rows > 32 or cols > 32:
                     raise Trunc
-                self.nibble_values(rows)
-                self.nibble_values(cols)
+                self.i += (rows + 1 + 3) // 4      # row_parts: 2 bit × (rows+1)
+                self.i += (cols + 1 + 3) // 4      # col_parts: 2 bit × (cols+1)
                 n_rows, n_cols = (rows if rows > 0 else 1), (cols if cols > 0 else 1)
-                matrix_rows = []
-                for r in range(n_rows):
-                    row_cells = []
-                    for c in range(n_cols):
-                        row_cells.append(self.parse_slot(depth + 1))
-                    matrix_rows.append(" & ".join(row_cells))
+                # Ô của ma trận cũng là các record LINE con, đóng bằng END của
+                # chính MATRIX — giống hệt ô của template, nên dùng chung cơ chế.
+                cells: list[str] = []
+                self.parse_slot(depth + 1, collect_lines=cells)
+                while len(cells) < n_rows * n_cols:
+                    cells.append("")
+                matrix_rows = [
+                    " & ".join(cells[r * n_cols:(r + 1) * n_cols])
+                    for r in range(n_rows)
+                ]
                 if n_rows == 1 and n_cols == 1:
                     # MathType dùng record MATRIX cả cho trường hợp chỉ 1 ô
                     # (không phải ma trận thật) — bọc \begin{matrix} ở đây
