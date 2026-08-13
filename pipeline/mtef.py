@@ -53,6 +53,8 @@ OPT_CHAR_NO_MTCODE = 0x20
 
 # Glyph chỉ gồm ký tự ngoặc (kể cả dạng đã escape) -> là dấu của ngoặc rỗng.
 _ONLY_BRACKETS = re.compile(r"(?:\\[\{\}|]|[(){}\[\]|\s])+")
+# Đuôi chỉ gồm ký tự ngoặc -> glyph dấu của template, cắt bỏ.
+_TRAILING_BRACKETS = re.compile(r"(?:\\[\{\}|]|[(){}\[\]|\s])+$")
 
 
 class Trunc(Exception):
@@ -428,54 +430,44 @@ class MTEFParser:
             elif rec == CHAR:
                 out.append(self.parse_char())
             elif rec == TMPL:
-                out.append(self.parse_tmpl(depth, opt))
+                _t = self.parse_tmpl(depth, opt)
+                (collect_lines if collect_lines is not None else out).append(_t)
             elif rec == PILE:
-                # PILE = ma trận/hệ phương trình gõ trong 1 khung MathType.
-                # Nhiều "dòng" nằm PHẲNG trong CÙNG 1 luồng record (không
-                # phải N record LINE tách biệt ở ngay cấp PILE) — ranh giới
-                # giữa các dòng là 1 record LINE có nội dung rỗng nằm xen
-                # giữa, không phải 1 record END của riêng từng dòng.
+                # PILE = nhiều dòng công thức trong CÙNG 1 khung MathType
+                # (hệ phương trình, danh sách nghiệm...).
                 #
-                # BUG cũ: gọi thẳng `self.parse_slot(depth + 1)` MỘT LẦN rồi
-                # coi đó là "1 dòng" — nhưng parse_slot() luôn đọc tới tận
-                # record END THẬT DUY NHẤT của toàn bộ PILE mới dừng (đúng
-                # bản chất của 1 slot bình thường), nên lần gọi duy nhất đó
-                # nuốt gọn luôn NHIỀU dòng liền, dính "...=1" với "1+tan^2..."
-                # thành "...=11+tan^2..." không có gì ngăn cách.
+                #   PILE = options(1) [nudge(4)] halign(1) valign(1)
+                #          rồi MỖI DÒNG là một record LINE con, đóng bằng END
+                #          của chính PILE — y hệt ô của TMPL và MATRIX.
                 #
-                # Fix: vẫn gọi parse_slot BÌNH THƯỜNG đúng 1 lần (để nó tự
-                # đọc hết PILE tới END thật như mọi slot khác), chỉ bật cờ
-                # `_pile_split_active` để nhánh LINE ở trên chèn sentinel
-                # `_ROW_SEP` mỗi khi gặp đúng ranh giới dòng rỗng, rồi cắt
-                # chuỗi kết quả theo sentinel đó ra từng dòng thật.
+                # Bản cũ bỏ qua byte options nên đọc lệch 1 byte, và vì thế
+                # không thấy được ranh giới dòng thật; nó phải đoán bằng cách
+                # coi "LINE rỗng" là dấu ngắt dòng (_ROW_SEP / _pile_split_active).
+                # Phỏng đoán đó hỏng: các dòng bị nối liền không dấu ngăn —
+                #     y>0  và  3x+2y<6   ->   "y>03x+2y<6"
+                # Đọc đúng header thì mỗi LINE con CHÍNH LÀ một dòng, không cần
+                # đoán gì nữa.
                 self.saw_pile = True
-                if opt & xfRULER:
-                    self.skip_ruler()
-                self.u8()  # halign
-                self.u8()  # valign
-                prev_active = self._pile_split_active
-                self._pile_split_active = True
-                try:
-                    raw = self.parse_slot(depth + 1)
-                finally:
-                    self._pile_split_active = prev_active
-                rows = raw.split(_ROW_SEP)
-                # Bỏ dòng rỗng ở đầu/cuối (marker canh lề nội bộ của
-                # MathType, không phải dòng công thức thật); dòng rỗng ở
-                # GIỮA thì giữ (tác giả có thể cố ý chừa dòng trắng).
-                while rows and not rows[0].strip():
-                    rows.pop(0)
-                while rows and not rows[-1].strip():
-                    rows.pop()
+                p_opt = self.u8()
+                if p_opt & OPT_NUDGE:
+                    self.i += 4
+                self.u8()          # halign
+                self.u8()          # valign
+                rows: list[str] = []
+                self.parse_slot(depth + 1, collect_lines=rows)
+                rows = [r for r in rows if r.strip()]
                 if not rows:
                     rows = [""]
-                if len(rows) > 1:
-                    pile_str = self._format_pile(rows)
-                    out.append(pile_str)
-                    if r"\begin{array}" in pile_str:
-                        pile_array_idx = len(out) - 1
+                pile_str = self._format_pile(rows) if len(rows) > 1 else rows[0]
+                if collect_lines is not None:
+                    # PILE nằm THẲNG trong khung template (hệ phương trình:
+                    # TMPL(BRACE) -> PILE -> các dòng) là NỘI DUNG của template,
+                    # không phải glyph dấu ngoặc. Chỉ record CHAR mới là glyph.
+                    collect_lines.append(pile_str)
                 else:
-                    out.append(rows[0])
+                    out.append(pile_str)
+                    if len(rows) > 1 and r"\begin{array}" in pile_str:
+                        pile_array_idx = len(out) - 1
             elif rec == MATRIX:
                 # MATRIX = options(1) [nudge(4)] valign(1) h_just(1) v_just(1)
                 #          rows(1) cols(1) row_parts col_parts, rồi rows*cols ô.
@@ -515,7 +507,11 @@ class MTEFParser:
                     " & ".join(cells[r * n_cols:(r + 1) * n_cols])
                     for r in range(n_rows)
                 ]
-                if n_rows == 1 and n_cols == 1:
+                if collect_lines is not None:
+                    collect_lines.append(
+                        matrix_rows[0] if (n_rows == 1 and n_cols == 1)
+                        else r"\begin{matrix}" + r"\\".join(matrix_rows) + r"\end{matrix}")
+                elif n_rows == 1 and n_cols == 1:
                     # MathType dùng record MATRIX cả cho trường hợp chỉ 1 ô
                     # (không phải ma trận thật) — bọc \begin{matrix} ở đây
                     # cho ra LaTeX vô nghĩa (VD "\Delta y\begin{matrix}>0...
@@ -703,13 +699,25 @@ class MTEFParser:
                 return "", trailing
             if sel in FENCES:
                 lo, hi = FENCES[sel]
+                # variation cho biết BÊN NÀO thật sự có dấu ngoặc:
+                #   bit 0x01 = có ngoặc trái, bit 0x02 = có ngoặc phải.
+                # Hệ phương trình gõ bằng MathType có var=1 (chỉ ngoặc nhọn TRÁI),
+                # còn tập hợp \{0;1;2\} có var=3 (cả hai). Bản cũ luôn in cả hai nên
+                # hệ bị đóng ngoặc phải — sai ký hiệu toán:
+                #     \left\{...\right\}   thay vì   \left\{...\right.
+                has_l, has_r = bool(var & 0x01), bool(var & 0x02)
             else:
                 lo = "[" if (var & 1) else "("
                 hi = "]" if (var & 4) else ")"
+                has_l = has_r = True
 
-            if not any(k in a for k in [r"\frac", r"\begin", r"\int", r"\sum", r"\matrix", r"\\", r"\sqrt"]):
+            if has_l and has_r and not any(
+                k in a for k in [r"\frac", r"\begin", r"\int", r"\sum", r"\matrix", r"\\", r"\sqrt"]
+            ):
                 return lo + a + hi, trailing
-            return r"\left" + lo + a + r"\right" + hi, trailing
+            left = r"\left" + (lo if has_l else ".")
+            right = r"\right" + (hi if has_r else ".")
+            return left + a + right, trailing
 
         if sel == TM_ROOT:
             # Slot a = chỉ số (index), slot b = biểu thức dưới căn (radicand).
