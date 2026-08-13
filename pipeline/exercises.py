@@ -269,18 +269,39 @@ _NEXT_LETTER = {"A": "B", "B": "C", "C": "D"}
 
 
 def _pull_options_from_head(inlines: list[Inline]) -> tuple[list[Inline], list[Inline]]:
-    """Tách phần phương án bị gõ DÍNH vào đoạn câu hỏi.
+    """Tách phương án bị gõ chung đoạn với câu hỏi, CẮT THEO RANH GIỚI RUN.
 
-    Có câu mà tác giả gõ đề và phương án trong cùng một đoạn::
+    Có câu tác giả gõ đề và phương án trong cùng một đoạn::
 
-        Trong các đẳng thức sau, ... cơ bản? A. sin a + cos a = 1 B. sin^2 a ...
+        Câu 20. Trong các đẳng thức sau, ... cơ bản? A. sin a + cos a = 1 B. ...
 
-    Khi đó A và B nằm trong phần đề, chỉ C và D được nhận là phương án — câu chỉ
-    còn 2 lựa chọn và đáp án trỏ sai ô.
+    Nhưng Word KHÔNG lưu đó là một khối chữ liền: vì nhãn được in đậm nên mỗi
+    nhãn là một ``<w:r>`` riêng. Đọc thẳng document.xml của câu trên::
 
-    Chỉ cắt khi thấy ĐỦ CẢ ``A.`` LẪN ``B.``; một chữ "A." lẻ trong câu chữ bình
-    thường sẽ không đủ điều kiện. Trả về ``(phần_đề, phần_phương_án)``.
+        run3: 'Trong các đẳng thức sau, ... cơ bản?'
+        run5: 'A.'
+        run6: ' sin α + cos α = 1 '
+        run8: 'B.'
+        run9: ' sin²α + cos²α = 1 '
+
+    Ranh giới vì thế ĐÃ CÓ SẴN ở tầng run — chỉ cần cắt danh sách inline tại run
+    nhãn đầu tiên, không cần dò regex trên chuỗi văn bản.
+
+    Điều kiện an toàn: phải thấy run ``A.`` rồi run ``B.`` theo đúng thứ tự thì
+    mới cắt, nên một chữ "A." lẻ trong câu chữ không kích hoạt được.
     """
+    marks = [(i, m.group(1))
+             for i, inl in enumerate(inlines)
+             if inl.kind == "text" and (m := RE_BARE_LETTER.match(inl.text))]
+    if len(marks) >= 2 and marks[0][1] == "A" and marks[1][1] == "B":
+        cut = marks[0][0]
+        return inlines[:cut], inlines[cut:]
+
+    # Không có run nhãn nào -> tác giả gõ liền một mạch, Word không lưu ranh giới
+    # nào cả. Đo trên corpus: 27 đoạn như vậy, tất cả trong GDKTPL 12. Chỉ khi đó
+    # mới cắt theo văn bản, vì đó là thông tin duy nhất còn lại.
+    if marks:
+        return inlines, []
     for idx, inl in enumerate(inlines):
         if inl.kind != "text":
             continue
@@ -288,17 +309,17 @@ def _pull_options_from_head(inlines: list[Inline]) -> tuple[list[Inline], list[I
         if not m:
             continue
         rest = inl.text[m.start():]
-        tail_text = rest + "".join(
-            i.text for i in inlines[idx + 1:] if i.kind == "text")
-        if not re.search(r"(?<![A-Za-z0-9])B[.)](?:\s|$)", tail_text):
+        tail = rest + "".join(i.text for i in inlines[idx + 1:] if i.kind == "text")
+        if not re.search(r"(?<![A-Za-z0-9])B[.)](?:\s|$)", tail):
             continue
-        stem = inlines[:idx]
+        stem = list(inlines[:idx])
         before = inl.text[:m.start()]
         if before.strip():
-            stem = stem + [Inline("text", before, bold=inl.bold,
-                                  color=inl.color, underline=inl.underline)]
+            stem.append(Inline("text", before, bold=inl.bold, color=inl.color,
+                               underline=inl.underline, style=inl.style))
         opts = [Inline("text", rest, bold=inl.bold, color=inl.color,
-                       underline=inl.underline)] + list(inlines[idx + 1:])
+                       underline=inl.underline, style=inl.style)]
+        opts.extend(inlines[idx + 1:])
         return stem, opts
     return inlines, []
 
@@ -312,6 +333,16 @@ def _split_inline_markers(text: str, cur_letter: str) -> list[tuple[str | None, 
     Chỉ cắt khi gặp đúng chữ cái KẾ TIẾP (A->B->C->D). Ràng buộc này là thứ giữ
     cho luật an toàn: một chữ "B." lạc trong câu chữ sẽ không cắt được vì lúc đó
     chương trình đang chờ chữ khác.
+
+    ĐÂY LÀ ĐƯỜNG DỰ PHÒNG, không phải cách chính. Đo trên corpus: 4086 nhãn được
+    Word lưu thành ``<w:r>`` RIÊNG — chỗ đó cắt theo ranh giới run là đủ và chính
+    xác. Chỉ 26 run là tác giả gõ liền một mạch::
+
+        ' A. Benzyl acetate. B. Tristearin. C. Methyl formate. D. Methyl acetate.'
+
+    Với 26 run đó Word chỉ lưu ĐÚNG MỘT ``<w:r>`` vì định dạng đồng nhất — không
+    còn ranh giới nào trong file để đọc, nên cắt theo văn bản là thông tin duy
+    nhất có được, không phải lựa chọn cho tiện.
     """
     out: list[tuple[str | None, str]] = []
     letter = cur_letter

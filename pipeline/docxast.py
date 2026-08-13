@@ -41,6 +41,7 @@ class Inline:
     bold: bool = False
     color: str | None = None   # w:color/@w:val của run, dùng để phát hiện đáp án bôi màu
     underline: bool = False    # w:u present, dùng để phát hiện đáp án gạch chân
+    style: str | None = None   # w:rStyle/@w:val — character style của run
 
 
 @dataclass
@@ -253,9 +254,17 @@ def _run_fmt(t_el) -> dict:
     color = color_el.get(W("val")) if color_el is not None else None
     if color in ("auto", "000000", None):
         color = None
+    # rStyle = character style của run. Word dùng nó để đánh dấu nhãn phương án
+    # ("A.", "B.") KHÁC với văn bản thường, ngay cả khi cỡ chữ và màu y hệt:
+    #     run3 'Trong các đẳng thức sau...'  rPr = sz, szCs
+    #     run5 'A.'                          rPr = rStyle, sz, szCs
+    # Bỏ qua rStyle thì hai run trông giống nhau và _merge_text gộp mất ranh
+    # giới, khiến phương án dính vào đề và đáp án trỏ sai ô.
+    style_el = rpr.find(W("rStyle"))
     return {"bold": rpr.find(W("b")) is not None,
             "underline": rpr.find(W("u")) is not None,
-            "color": color}
+            "color": color,
+            "style": style_el.get(W("val")) if style_el is not None else None}
 
 
 def _merge_text(items: list[Inline]) -> list[Inline]:
@@ -274,7 +283,7 @@ def _merge_text(items: list[Inline]) -> list[Inline]:
         prev = out[-1] if out else None
         if (i.kind == "text" and prev is not None and prev.kind == "text"
                 and prev.bold == i.bold and prev.color == i.color
-                and prev.underline == i.underline):
+                and prev.underline == i.underline and prev.style == i.style):
             out[-1] = Inline("text", prev.text + i.text, bold=i.bold,
                               color=i.color, underline=i.underline)
         else:
