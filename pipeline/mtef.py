@@ -36,6 +36,15 @@ xfLSPACE, xfRULER, xfNULL = 0x04, 0x02, 0x08
 TEX_MARK = b"TeX Input Language\x00"
 _LAST_SEL: set[int] = set()   # selector của lần decode gần nhất (cho confidence)
 
+# Cờ trong BYTE OPTIONS RIÊNG của từng record (đúng spec MTEF v5).
+# Khác với các hằng xf* cũ vốn được so với nibble cao của tag — phép so đó luôn
+# bằng 0 nên các nhánh null/lspace/ruler thực tế CHƯA BAO GIỜ chạy.
+OPT_NUDGE = 0x08
+OPT_LINE_NULL = 0x01
+OPT_LINE_RULER = 0x02
+OPT_LINE_LSPACE = 0x04
+
+
 class Trunc(Exception):
     pass
 
@@ -314,7 +323,21 @@ class MTEFParser:
                 joined += " " + r
         return joined
 
-    def parse_slot(self, depth: int = 0) -> str:
+    def parse_slot(self, depth: int = 0, collect_lines: list[str] | None = None) -> str:
+        """Đọc nội dung của MỘT khung (frame) cho tới record END của chính nó.
+
+        `collect_lines` bật ngữ nghĩa "khung của TEMPLATE": mỗi record LINE con là
+        MỘT Ô RIÊNG của template, được gom vào danh sách này thay vì nối vào chuỗi.
+
+        Vì sao cần: trong MTEF, TMPL và LINE đều là khung tự đóng bằng END của
+        riêng nó, còn các ô của template chính là các LINE con. Cách cũ cho
+        parse_tmpl gọi parse_slot() một lần cho MỖI ô khiến số END bị lệch: lần
+        đệ quy vào LINE ăn mất END của template, nên ô số mũ không còn dấu kết
+        thúc và nuốt tiếp phần sau của dòng cha —
+            cos3x = cos³x − sin³x   ->   cos3x=cos^{3x-sin^{3x.}}
+        Đây là RC2 (desync biên slot), KHÔNG phải lỗi gõ của người soạn: bộ giải
+        mã độc lập MTEF-py đọc đúng cùng file này.
+        """
         if depth > 24:
             raise Trunc
         out: list[str] = []
@@ -353,13 +376,28 @@ class MTEFParser:
             if rec == END:
                 break
             elif rec == LINE:
-                if opt & xfNULL:
-                    continue
-                if opt & xfLSPACE:
+                # LINE có BYTE OPTIONS RIÊNG, giống CHAR và TMPL — không phải
+                # nibble cao của tag. Cờ null/lspace/ruler nằm trong byte đó:
+                #     0x01 null · 0x02 ruler · 0x04 lspace · 0x08 nudge
+                # Đọc thiếu byte này làm lệch 1 byte cho mọi record phía sau,
+                # nên \frac{x}{2} đọc ra thành "x2" (ô tử/mẫu rỗng).
+                lopt = self.u8()
+                if lopt & OPT_NUDGE:
+                    self.i += 4
+                if lopt & OPT_LINE_LSPACE:
                     self.u8()
-                if opt & xfRULER:
+                if lopt & OPT_LINE_RULER:
                     self.skip_ruler()
+                if lopt & OPT_LINE_NULL:
+                    # Dòng rỗng: KHÔNG có nội dung và KHÔNG có END của riêng nó.
+                    if collect_lines is not None:
+                        collect_lines.append("")
+                    continue
                 piece = self.parse_slot(depth + 1)
+                if collect_lines is not None:
+                    # Khung TEMPLATE: mỗi LINE con là một Ô riêng của template.
+                    collect_lines.append(piece)
+                    continue
                 # Ranh giới dòng thật của 1 PILE (hệ pt/nhiều dòng công thức
                 # gõ trong CÙNG 1 khung MathType) không nằm ở 1 record END
                 # riêng — nó xen giữa dòng dữ liệu dưới dạng 1 record LINE
@@ -551,29 +589,53 @@ class MTEFParser:
         return ch
 
     def parse_tmpl(self, depth: int, tag_opt: int = 0) -> str:
+        """TMPL = [tag][options][selector][variation:u16] rồi tới các ô con.
 
+        Khung TMPL kết thúc bằng END của chính nó, và BÊN TRONG khung đó có thể
+        có hai loại con:
+          * các record LINE  -> chính là các Ô của template (số mũ, tử, mẫu...)
+          * các record khác  -> nội dung ĐỨNG SAU template trên cùng dòng
+        Ví dụ `cos³x − sin³x`: khung SUP chứa LINE('3') rồi tới 'x', '−', 'sin'…
+        Phải xuất phần sau ra SAU template, không được nhét vào ô số mũ, cũng
+        không được vứt đi.
+        """
+        rendered, trailing = self._parse_tmpl_parts(depth, tag_opt)
+        return rendered + trailing
 
-        """TMPL = [tag][options][selector][variation:u16] rồi tới các ô con."""
-        if tag_opt & xfNUDGE:
-            self.i += 2
-        self.u8()                  # options
+    def _parse_tmpl_parts(self, depth: int, tag_opt: int = 0) -> tuple[str, str]:
+        # Header TMPL theo đúng spec MTEF v5:
+        #     options(1) [nudge(4)] selector(1) variation(1 HOẶC 2) options(1)
+        # `variation` chỉ dài 2 byte khi bit 0x80 của byte đầu được bật.
+        #
+        # Code cũ đọc variation bằng u16 CỐ ĐỊNH và bỏ qua byte options cuối.
+        # Khi variation < 0x80 thì tổng số byte tình cờ bằng nhau (1+1+2 = 1+1+1+1)
+        # nên vẫn chạy; nhưng khi bit 0x80 bật thì LỆCH ĐÚNG 1 BYTE, làm hỏng
+        # mọi record phía sau — đó là lý do \frac{x}{2} đọc ra thành "x2".
+        opts = self.u8()
+        if opts & xfNUDGE:
+            self.i += 4
         sel = self.u8()            # selector THẬT
-        var = self.u16()           # variation (u16)
+        b1 = self.u8()
+        if b1 & 0x80:
+            var = (b1 & 0x7F) | (self.u8() << 8)
+        else:
+            var = b1
+        self.u8()                  # options byte đứng SAU variation
         self.used_sel.add(sel)
 
         slots: list[str] = []
         if sel in FENCES or sel in (TM_OBRACK, TM_INTERVAL):
             self._fence_nest += 1
         try:
-            for _ in range(_SLOTS.get(sel, 1)):
-                if self.i >= len(self.d):
-                    break
-                self._tmpl_nest += 1
-                try:
-                    slots.append(self.parse_slot(depth + 1))
-                finally:
-
-                    self._tmpl_nest -= 1
+            # TMPL là một khung tự đóng bằng END của chính nó; các ô của nó là
+            # các record LINE con. Đọc MỘT lần cho tới END đó và gom LINE con
+            # thành các ô — thay vì gọi parse_slot() một lần cho mỗi ô, vốn làm
+            # lệch số END và khiến ô nuốt phần sau của dòng cha.
+            self._tmpl_nest += 1
+            try:
+                trailing = self.parse_slot(depth + 1, collect_lines=slots)
+            finally:
+                self._tmpl_nest -= 1
         finally:
             if sel in FENCES or sel in (TM_OBRACK, TM_INTERVAL):
                 self._fence_nest -= 1
@@ -584,7 +646,7 @@ class MTEFParser:
 
         if sel in FENCES or sel in (TM_OBRACK, TM_INTERVAL):
             if not a or not a.strip():  # không bao giờ sinh ngoặc rỗng (), [], {}
-                return ""
+                return "", trailing
             if sel in FENCES:
                 lo, hi = FENCES[sel]
             else:
@@ -592,8 +654,8 @@ class MTEFParser:
                 hi = "]" if (var & 4) else ")"
 
             if not any(k in a for k in [r"\frac", r"\begin", r"\int", r"\sum", r"\matrix", r"\\", r"\sqrt"]):
-                return lo + a + hi
-            return r"\left" + lo + a + r"\right" + hi
+                return lo + a + hi, trailing
+            return r"\left" + lo + a + r"\right" + hi, trailing
 
         if sel == TM_ROOT:
             # Slot a = chỉ số (index), slot b = biểu thức dưới căn (radicand).
@@ -601,33 +663,39 @@ class MTEFParser:
             # \sqrt[2-\sqrt{2}]{} — KaTeX chết vì thiếu đối số của macro.
             # Radicand rỗng thì luôn là hỏng, nên coi a chính là radicand.
             if not b.strip() and a.strip():
-                return r"\sqrt" + _brace(a)
-            return (r"\sqrt" + _brace(b)) if not a else (r"\sqrt[" + a + "]" + _brace(b))
+                return r"\sqrt" + _brace(a), trailing
+            return (r"\sqrt" + _brace(b)) if not a else (r"\sqrt[" + a + "]" + _brace(b)), trailing
         if sel == TM_FRACT:
             if not a.strip() and not b.strip():
-                return ""
-            return r"\frac" + _brace(a) + _brace(b)
+                return "", trailing
+            return r"\frac" + _brace(a) + _brace(b), trailing
+        # TM_SUB / TM_SUP có HAI ô con: ô không dùng được MathType ghi là một
+        # record LINE null, ô còn lại mới mang nội dung. Thứ tự không cố định,
+        # nên lấy ô đầu tiên có nội dung thay vì mặc định slots[0]:
+        #     TMPL sel=28 · LINE null · LINE → '3'   ==>   ^{3}
         if sel == TM_SUB:
-            return ("_{" + a + "}") if a else ""
+            v = next((s for s in slots if s.strip()), "")
+            return ("_{" + v + "}") if v else "", trailing
         if sel == TM_SUP:
-            return ("^{" + a + "}") if a else ""
+            v = next((s for s in slots if s.strip()), "")
+            return ("^{" + v + "}") if v else "", trailing
         if sel == TM_SUBSUP:
             if a in ("360", "180") or (a and "360" in a):
                 if "\\circ" in b or b == "°":
-                    return f" {a}^{{\\circ}}"
+                    return f" {a}^{{\\circ}}", trailing
             res = ""
             if a:
                 res += "_{" + a + "}"
             if b:
                 res += "^{" + b + "}"
-            return res
+            return res, trailing
         if sel == TM_SCRIPT:
             r = a
             if b:
                 r += "_" + _brace(b)
             if c:
                 r += "^" + _brace(c)
-            return r
+            return r, trailing
         # Các template trang trí một ô: ô RỖNG thì không sinh macro rỗng.
         # MathType hay để lại TM_OBAR rỗng giữa dòng, sinh ra "\overline{}\to"
         # — KaTeX render thành một gạch trên lơ lửng không có nội dung.
@@ -635,7 +703,7 @@ class MTEFParser:
         # nhất (52 lần), và \overline{} chiếm 23/23 ca đối-số-rỗng của corpus.
         if sel in (TM_UBAR, TM_OBAR, TM_VEC, TM_ARROW, TM_TILDE, TM_HAT):
             if not a.strip():
-                return ""
+                return "", trailing
             return {
                 TM_UBAR: r"\underline",
                 TM_OBAR: r"\overline",
@@ -643,28 +711,36 @@ class MTEFParser:
                 TM_ARROW: r"\vec",
                 TM_TILDE: r"\tilde",
                 TM_HAT: r"\hat",
-            }[sel] + _brace(a)
+            }[sel] + _brace(a), trailing
         if sel == TM_STRIKE:
             if a == "=":
-                return r"\ne "
+                return r"\ne ", trailing
         if sel == TM_BOX:
-            return r"\boxed" + _brace(a)
+            return r"\boxed" + _brace(a), trailing
         if sel in (TM_SUM, TM_SUMOP):
-            return r"\sum" + _sub(b) + _sup(c) + a
+            return r"\sum" + _sub(b) + _sup(c) + a, trailing
         if sel in (TM_PROD,):
-            return r"\prod" + _sub(b) + _sup(c) + a
+            return r"\prod" + _sub(b) + _sup(c) + a, trailing
         if sel in (TM_INTEG, TM_INTOP):
-            return r"\int" + _sub(b) + _sup(c) + a
+            return r"\int" + _sub(b) + _sup(c) + a, trailing
         if sel == TM_UNION:
-            return r"\bigcup" + _sub(b) + _sup(c) + a
+            return r"\bigcup" + _sub(b) + _sup(c) + a, trailing
         if sel == TM_INTER:
-            return r"\bigcap" + _sub(b) + _sup(c) + a
+            return r"\bigcap" + _sub(b) + _sup(c) + a, trailing
         if sel == TM_LIM:
-            return (r"\lim\limits_{" + a + "}") if a else ""
+            # HAI ô: a = tên toán tử viết bằng ký tự thường ('lim', 'max', ...),
+            # b = điều kiện dưới dấu ('x \to 3'). Bản cũ lấy nhầm a làm chỉ số
+            # dưới và ĐÁNH RƠI điều kiện — MTEF-py cho thấy đúng phải là
+            # \mathop{lim}\limits_{x→+∞}.
+            op = "".join(a.split()).lower()
+            name = {"lim": r"\lim", "max": r"\max", "min": r"\min",
+                    "sup": r"\sup", "inf": r"\inf"}.get(op, r"\lim")
+            cond = b.strip() or (a.strip() if not op.isalpha() else "")
+            return (name + r"\limits_{" + cond + "}") if cond else name, trailing
         if sel == TM_HBRACE:
-            return r"\underbrace" + _brace(a)
+            return r"\underbrace" + _brace(a), trailing
         if sel == TM_HBRACK:
-            return r"\overbrace" + _brace(a)
+            return r"\overbrace" + _brace(a), trailing
         res = a
         if b:
             res += "_{" + b + "}"
@@ -672,7 +748,7 @@ class MTEFParser:
             res += "^{" + c + "}"
         if not res.strip():
             res = " ".join(_brace(s) for s in slots if s.strip())
-        return res
+        return res, trailing
 
 
 _SLOTS = {

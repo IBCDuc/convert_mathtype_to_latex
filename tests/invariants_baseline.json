@@ -1,14 +1,14 @@
 {
  "corpus": "Kiến thức trọng tâm và tài tập",
  "n_files": 43,
- "n_unique_formulas": 2862,
+ "n_unique_formulas": 2850,
  "counts": {
   "viet_outside_text": 0,
   "spaced_function_name": 0,
   "spaced_digits": 0,
-  "stray_pipe": 2,
-  "spurious_pipe_style": 27,
-  "empty_macro_arg": 1,
+  "stray_pipe": 1,
+  "spurious_pipe_style": 31,
+  "empty_macro_arg": 0,
   "escaped_brace_in_macro": 0,
   "brace_imbalance": 0,
   "pua_chars": 0
