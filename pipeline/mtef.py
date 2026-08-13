@@ -453,6 +453,12 @@ class MTEFParser:
                     self.i += 4
                 self.u8()          # halign
                 self.u8()          # valign
+                # Cờ 0x02 = có RULER đi ngay sau valign. Bỏ qua nó thì lệch 4 byte
+                # và toàn bộ các dòng của hệ biến mất, chỉ còn lại dấu "\{":
+                #     04 02 | 01 halign | 01 valign | 01 00 ba 07 ruler | 01 00 LINE...
+                # MTEF-py cũng không đọc ruler ở đây, nên không dùng đối chiếu được.
+                if p_opt & OPT_LINE_RULER:
+                    self.skip_ruler()
                 rows: list[str] = []
                 self.parse_slot(depth + 1, collect_lines=rows)
                 rows = [r for r in rows if r.strip()]

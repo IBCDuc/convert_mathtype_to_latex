@@ -49,6 +49,7 @@ class Block:
     kind: str                 # para | table
     inlines: list[Inline] = field(default_factory=list)
     ilvl: int | None = None
+    num_id: str | None = None   # w:numPr/w:numId — Word TỰ SINH số thứ tự câu
     style: str = "Normal"
     bold: bool = False
     rows: list = field(default_factory=list)
@@ -142,6 +143,12 @@ class DocxReader:
             if npr is not None:
                 lv = npr.find(W("ilvl"))
                 b.ilvl = int(lv.get(W("val"))) if lv is not None else 0
+                # numId cho biết đoạn thuộc danh sách ĐÁNH SỐ TỰ ĐỘNG nào. Nhiều
+                # file đánh số câu hỏi bằng cách này, nên chuỗi "Câu 1." KHÔNG
+                # nằm trong <w:t> — bỏ qua numPr thì tầng bài tập không thấy mốc
+                # câu và gộp hàng chục câu làm một.
+                nid = npr.find(W("numId"))
+                b.num_id = nid.get(W("val")) if nid is not None else None
         b.inlines = self._walk(p)
         runs = p.findall(f".//{W('r')}")
         if runs:

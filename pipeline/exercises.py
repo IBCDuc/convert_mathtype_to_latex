@@ -38,6 +38,39 @@ SUBJECTS = {
 }
 
 RE_QUESTION = re.compile(r"(?i)^câu\s*(\d+)\s*[.:)]?\s*")
+# Tiêu đề mục trong đề: "I.", "II.1:", "Lever 2", "Phần A", "Trắc nghiệm ..."
+RE_SECTION_HEAD = re.compile(
+    r"(?i)^\s*(?:"
+    r"[ivx]+\s*[.:)]|"                     # I.  II.1:
+    r"[ivx]+\.\d+\s*[.:)]|"
+    r"lever\s*\d|level\s*\d|"
+    r"phần\s+[a-divx]|"
+    r"(?:phần\s+)?(?:trắc\s*nghiệm|tự\s*luận)\b"
+    r")")
+
+
+def _numbered_question(b) -> bool:
+    """Đoạn mở đầu một câu hỏi được Word ĐÁNH SỐ TỰ ĐỘNG.
+
+    Nhiều file không gõ chữ "Câu 1." mà dùng danh sách đánh số của Word, nên số
+    thứ tự do Word sinh ra lúc hiển thị và KHÔNG có trong <w:t>. Mốc câu vì thế
+    chỉ còn nằm ở <w:numPr>; bỏ qua nó thì hàng chục câu bị gộp làm một —
+    đo được 5 câu "khổng lồ" ôm tới 97 phương án.
+    """
+    if getattr(b, "num_id", None) is None:
+        return False
+    t = b.text.strip()
+    if not t:
+        return False
+    # Danh sách đánh số cũng được dùng cho DÒNG PHƯƠNG ÁN và cho TIÊU ĐỀ MỤC.
+    # Cả hai đều không mở đầu câu hỏi:
+    #   '(3;8). B. (3;8). C. [3;8]. D. (3;8).'   <- dòng phương án
+    #   'II.1: Trắc nghiệm nhiều lựa chọn'       <- tiêu đề mục
+    if RE_OPTION_MARK.match(t) or RE_BARE_LETTER.match(t):
+        return False
+    if RE_SECTION_HEAD.match(t):
+        return False
+    return True
 RE_LEVEL = re.compile(r"(?i)^level\s*([123])\b")
 RE_BLOOM = re.compile(r"(?i)^(?:[ivx]+\.?\s*)?(nhận biết|thông hiểu|vận dụng cao|vận dụng)\b")
 BLOOM_MAP = {"nhận biết": ("knowledge", 1), "thông hiểu": ("comprehension", 2),
@@ -944,13 +977,14 @@ def convert_json(path: str | Path) -> tuple[list[dict], list[dict]]:
                 pending_start = idx
                 continue
             m = RE_QUESTION.match(b.text)
-            if m:
+            if m or _numbered_question(b):
                 flush_pending(idx)
                 q_start = idx
                 idx += 1
                 while idx < len(body) and not (
                         body[idx].kind == "para" and
-                        (RE_QUESTION.match(body[idx].text) or _cognitive(body[idx].text)[0])):
+                        (RE_QUESTION.match(body[idx].text) or _numbered_question(body[idx])
+                         or _cognitive(body[idx].text)[0])):
                     idx += 1
                 q_body = body[q_start + 1:idx]
                 stem_first = [b]
