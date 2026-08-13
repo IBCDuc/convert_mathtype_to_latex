@@ -358,16 +358,18 @@ class MTEFParser:
             tag = self.u8()
             if tag >= 16:
                 if tag == COLOR_DEF:
+                    # COLOR_DEF = options(1) + giá trị màu + [tên nếu cờ NAME].
+                    # CMYK -> 4 × uint16 (8 byte); còn lại RGB -> 3 × uint16 (6 byte).
+                    #
+                    # Bản cũ đọc 2 byte cho RGB rồi LUÔN gọi cstr(), tức hụt 3 byte
+                    # mỗi lần gặp record này. Chỉ một COLOR_DEF nằm giữa thân là đủ
+                    # làm lệch toàn bộ TMPL/LINE phía sau, khiến nội dung trong ngoặc
+                    # trôi ra ngoài và để lại cặp ngoặc rỗng:
+                    #     \{0;1;2\}   ->   0;1;2 \{\}
                     c_opt = self.u8()
-                    if c_opt & 1:
-                        self.i += 6
-                    elif c_opt & 2:
-                        self.i += 8
-                    elif c_opt & 4:
-                        self.i += 6
-                    else:
-                        self.i += 2
-                    self.cstr()
+                    self.i += 8 if (c_opt & 0x01) else 6
+                    if c_opt & 0x04:            # mtefCOLOR_NAME
+                        self.cstr()
                     continue
                 if tag == FONT_DEF:
                     self.u8(); self.cstr(); continue
