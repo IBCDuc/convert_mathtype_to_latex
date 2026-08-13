@@ -43,6 +43,16 @@ OPT_NUDGE = 0x08
 OPT_LINE_NULL = 0x01
 OPT_LINE_RULER = 0x02
 OPT_LINE_LSPACE = 0x04
+# Cờ của record CHAR
+OPT_CHAR_EMBELL = 0x01
+OPT_CHAR_FUNC_START = 0x02
+OPT_CHAR_ENC8 = 0x04
+OPT_CHAR_ENC16 = 0x10
+OPT_CHAR_NO_MTCODE = 0x20
+
+
+# Glyph chỉ gồm ký tự ngoặc (kể cả dạng đã escape) -> là dấu của ngoặc rỗng.
+_ONLY_BRACKETS = re.compile(r"(?:\\[\{\}|]|[(){}\[\]|\s])+")
 
 
 class Trunc(Exception):
@@ -531,13 +541,25 @@ class MTEFParser:
         self.i += n * 3
 
     def parse_char(self) -> str:
+        """CHAR = options [nudge] typeface [mtcode] [bits8] [bits16] (spec MTEF v5).
+
+        Ba chỗ bản cũ đọc sai, mỗi chỗ đều làm LỆCH BYTE cho mọi record phía sau:
+          * nudge dài 4 byte (2 toạ độ × 2), không phải 2;
+          * mtcode CHỈ có mặt khi cờ NoMtcode TẮT — bản cũ luôn đọc 2 byte;
+          * thiếu hẳn nhánh EncChar16 (2 byte).
+        Cờ 0x04 cũng không phải "move" mà là EncChar8 (1 byte ký tự 8-bit).
+        """
         o = self.u8()
-        if o & xfNUDGE:
-            self.i += 2
+        if o & OPT_NUDGE:
+            self.i += 4
         tf = self.u8()
-        code = self.u16()
-        if o & xfMOVE:
+        code = 0
+        if not (o & OPT_CHAR_NO_MTCODE):
+            code = self.u16()
+        if o & OPT_CHAR_ENC8:
             self.i += 1
+        if o & OPT_CHAR_ENC16:
+            self.i += 2
         return self.render_char(code, tf)
 
     def render_char(self, code: int, typeface: int = 0) -> str:
@@ -591,16 +613,30 @@ class MTEFParser:
     def parse_tmpl(self, depth: int, tag_opt: int = 0) -> str:
         """TMPL = [tag][options][selector][variation:u16] rồi tới các ô con.
 
-        Khung TMPL kết thúc bằng END của chính nó, và BÊN TRONG khung đó có thể
-        có hai loại con:
-          * các record LINE  -> chính là các Ô của template (số mũ, tử, mẫu...)
-          * các record khác  -> nội dung ĐỨNG SAU template trên cùng dòng
-        Ví dụ `cos³x − sin³x`: khung SUP chứa LINE('3') rồi tới 'x', '−', 'sin'…
-        Phải xuất phần sau ra SAU template, không được nhét vào ô số mũ, cũng
-        không được vứt đi.
+        Khung TMPL kết thúc bằng END của chính nó, và bên trong có hai loại con:
+          * record LINE   -> các Ô của template (số mũ, tử, mẫu, nội dung ngoặc)
+          * record CHAR   -> KÝ TỰ NỘI BỘ của template, KHÔNG phải nội dung
+
+        Loại thứ hai phải bị BỎ. Đó là các glyph mà MathType lưu kèm để biết vẽ
+        dấu gì — ví dụ khung TM_PAREN của `A(-3;-4)` chứa LINE('-3;-4') rồi hai
+        CHAR '(' và ')'. Giữ chúng lại sẽ sinh ngoặc rỗng lặp:
+            A(-3;-4)()      f'(x)()=x(x+1)()(x-4)()^{3}      ...=0\\}\\{\\}
+        Bộ giải mã độc lập MTEF-py cũng bỏ đúng nhóm CHAR này.
+
+        Nội dung đứng SAU template (như `x - sin³x` trong `cos³x - sin³x`) nằm
+        NGOÀI khung, do dòng cha đọc tiếp — không phải phần dư ở đây.
         """
-        rendered, trailing = self._parse_tmpl_parts(depth, tag_opt)
-        return rendered + trailing
+        rendered, glyphs = self._parse_tmpl_parts(depth, tag_opt)
+        if rendered:
+            return rendered
+        # Template rỗng: khi đó chính glyph nội bộ mới mang nghĩa — ví dụ mũi tên
+        # `\to` gõ một mình (ô nhãn phía trên để trống). Nhưng KHÔNG lấy lại nếu
+        # glyph chỉ toàn ký tự ngoặc, vì đó là dấu của một ngoặc rỗng và trả về
+        # sẽ tái sinh đúng "()" / "\{\}" mà ta vừa loại bỏ.
+        g = glyphs.strip()
+        if g and not _ONLY_BRACKETS.fullmatch(g):
+            return g
+        return ""
 
     def _parse_tmpl_parts(self, depth: int, tag_opt: int = 0) -> tuple[str, str]:
         # Header TMPL theo đúng spec MTEF v5:
@@ -792,485 +828,9 @@ _LIMSUB_RE = re.compile(
 
 
 def _tidy(s: str) -> str:
-    s = " ".join(s.split()).strip()
-
-    # Fix MathType corruption: \mathbb{Z\} -> \mathbb{Z}  (stray backslash before } inside mathbb)
-    # This causes KaTeX to fail parsing and display raw LaTeX text instead of rendering the formula.
-    # Safe: only matches the broken pattern, does not affect correct \mathbb{Z} formulas.
-    s = s.replace(r'\mathbb{Z\}', r'\mathbb{Z}')
-
-    # Fix MathType Set Template: \{|x \in \mathbb{R}|} or \{|x \in \mathbb{R}|\} -> \{x \in \mathbb{R} \mid 
-    s = re.sub(r'\\\{\|\s*([a-zA-Z0-9]+)\s*\\in\s*(\\?[a-zA-Z]+(?:\{[a-zA-Z0-9]*\})?)\s*\|?\\?\}?\s*', r'\\{\1 \\in \2 \\mid ', s)
-    s = re.sub(r'\\\{\|\s*', r'\\{', s)
-    s = re.sub(r'(\\mid\s*)\\?\}\s*', r'\1', s)
-
-    # Template tập hợp của MathType có HAI dải phân cách; dải MỞ đã xử lý ở trên,
-    # đây là dải ĐÓNG rò ra ngay trước \}:  \{k\pi |k\in \mathbb{Z} |\}
-    #
-    # Điều kiện "có khoảng trắng phía trước" là chỗ phân biệt sống còn:
-    #   "\mathbb{Z} |\}"  -> dải phân cách rò ra, phải BỎ
-    #   "|x|\}"           -> dấu giá trị tuyệt đối, phải GIỮ (không có space)
-    # Nhận cả \} và } vì luật escape "} -> \}" chạy SAU luật này.
-    s = re.sub(r'\s+\|\s*(?=\\?\})', '', s)
-    s = re.sub(r'\\+$', r'', s)
-
-    # Fix MathType author typing artifact: author typed full equation inside superscript slot
-    # (e.g. 2x^{2-5x+3=0} -> 2x^2 - 5x + 3 = 0), because they forgot to press -> to exit the
-    # superscript slot. See pipeline/exp_repair.py for the full rationale and safety analysis.
-    #
-    # Supersedes the previous '='-only regex: exp_repair also catches the no-'=' variant
-    # (x^{2-3x-4}) via base-variable recurrence, tracks brace depth so that 2^{x-1}=8 is left
-    # alone, and refuses to touch symbolic exponents (nx^{n-1}) which the old regex would break.
-    s, _exp_notes = repair_swallowed_exponent(s)
-
-    # Fix \end{array\} -> \end{array}
-    s = re.sub(r'\\end\{array\\?\}', r'\\end{array}', s)
-    # Fix align -> aligned (KaTeX only allows align in display mode)
-    s = re.sub(r'\\begin\{align\*?\}', r'\\begin{aligned}', s)
-    s = re.sub(r'\\end\{align\*?\}', r'\\end{aligned}', s)
-
-
-    # Fix \( inside math mode -> ( while preserving \\ ( line breaks
-    s = re.sub(r'\\\\+\(', r'\\\\ (', s)
-    s = re.sub(r'(?<!\\)\\\(', '(', s)
-    s = re.sub(r'(?<!\\)\\\)', ')', s)
-
-
-    # Fix set number symbols N, Z, Q, R -> \mathbb{N}, etc.
-    s = re.sub(r'(\\in|\\notin)\s*([NZQR])\b', r'\1 \\mathbb{\2}', s)
-    s = re.sub(r'(\\in\s*\\mathbb\{[NZQR]\})\s*/\s*', r'\1 \\mid ', s)
-    s = re.sub(r'(\\in\s*[NZQR])\s*/\s*', r'\1 \\mid ', s)
-
-    # Ensure trailing set brace is escaped \} if formula starts with \{
-    #
-    # Only touch a trailing } that is genuinely ORPHANED. Escaping a } that closes
-    # a real group destroys that group, and the balancer then papers over it:
-    #     ...\mathbb{Z}  ->  ...\mathbb{Z\}  ->  (balance)  ->  ...\mathbb{Z\}}
-    # which renders as "Z}" instead of "ℤ". Measured 6 such formulas in the corpus.
-    if r'\{' in s and not s.rstrip().endswith(r'\}') and not s.rstrip().endswith(r'\end{array}'):
-        if trailing_close_is_orphan(s):
-            s = s.rstrip()[:-1] + r'\}'
-        elif not s.rstrip().endswith('}'):
-            s += r'\}'
-
-    # Fix MathType corruption: x\in (... \subset (a;b) ) -> x\in (...) \subset (a;b)
-    # MathType incorrectly places \subset inside the outer parentheses of the interval.
-    # Example: x\in (x_{0}-h;x_{0}+h \subset (a;b)) -> x\in (x_{0}-h;x_{0}+h) \subset (a;b)
-    s = re.sub(
-        r'(\\in\s*\()([^)]+?)\s*\\subset\s*(\([^)]+\))\s*\)',
-        lambda m: m.group(1) + m.group(2) + r') \subset ' + m.group(3),
-        s
-    )
-
-
-    # Fix MTEF f15/f23/f3/f26/f27 exponent corruptions in polynomials & rational functions
-    def _repl_cubic(m):
-        prefix = m.group(1).strip()
-        var = m.group(2)
-        quad_coeff = m.group(3).strip()
-        rest = m.group(5).strip()
-        while rest.endswith('}'):
-            rest = rest[:-1].strip()
-        return f'{prefix}{var}^3 {quad_coeff} {var}^2 {rest}'
-
-    s = re.sub(
-        r'([a-zA-Z0-9\=\(\)\s]*?)([xXyYzZ])\s*\^\s*\{\s*3\s*([\+\-][^\}]+?)\s*([xXyYzZ])\s*\^\s*\{\s*2\s*(.+)',
-        _repl_cubic,
-        s
-    )
-
-    def _repl_quartic(m):
-        prefix = m.group(1).strip()
-        var = m.group(2)
-        quad_coeff = m.group(3).strip()
-        rest = m.group(5).strip()
-        while rest.endswith('}'):
-            rest = rest[:-1].strip()
-        return f'{prefix}{var}^4 {quad_coeff} {var}^2 {rest}'
-
-    s = re.sub(
-        r'([a-zA-Z0-9\=\(\)\s]*?)([xXyYzZ])\s*\^\s*\{\s*4\s*([\+\-][^\}]+?)\s*([xXyYzZ])\s*\^\s*\{\s*2\s*(.+)',
-        _repl_quartic,
-        s
-    )
-
-    def _repl_frac(m):
-        eq_prefix = m.group(1) or ''
-        num_prefix = m.group(2).strip()
-        var = m.group(3)
-        num_exp = m.group(4).strip()
-        den = m.group(5).strip()
-        return f'{eq_prefix}\\frac{{{num_prefix}{var}^2 {num_exp}}}{{{den}}}'
-
-    s = re.sub(
-        r'([a-zA-Z0-9\=\s]*?)\\frac\{\s*(.*?)([xXyYzZ])\s*\^\s*\{\s*2\s*([\+\-][^\}]+?)\}\s*(.*?)\}\{\}',
-        _repl_frac,
-        s
-    )
-
-    s = re.sub(
-        r'x\s*\^\s*\{\s*2\s*\+\s*2\s*a\s*n\s*\.\s*x\s*\+\s*b\s*n\s*-\s*m\s*c\s*\}',
-        lambda m: r'x^2 + 2an \cdot x + bn - mc',
-        s
-    )
-
-    s = re.sub(
-        r'x\s*\^\s*\{\s*2\s*\+\s*2\s*b\s*x\s*\+\s*c(\s*\=\s*0)?\s*\}',
-        lambda m: 'x^2 + 2bx + c' + (m.group(1) or ''),
-        s
-    )
-
-    def _repl_den(m):
-        den = m.group(1).strip()
-        exp = m.group(2).strip()
-        return f'}}{{({den})^{exp}}}'
-
-    s = re.sub(r'\s*\(([^)]+)\)\s*\}\{\s*\^\s*\{?(\d+)\}?\s*\}', _repl_den, s)
-
-    s = re.sub(r'(\d+)\s*\.\}', r'\1}', s)
-    s = s.replace(r'\frac{a x ^{2 + b x + c} p x + q}{}', r'\frac{ax^2 + bx + c}{px + q}')
-    s = s.replace(r'\frac{a x^{2 + b x + c} p x + q}{}', r'\frac{ax^2 + bx + c}{px + q}')
-    s = s.replace(r'\frac{ax^{2 + bx + c} px + q}{}', r'\frac{ax^2 + bx + c}{px + q}')
-    s = re.sub(r"[\uE000-\uF8FF]", "", s)
-    s = _LIM_TO_RE.sub(lambda m: "\\" + m.group(1).lower() + "_{" + m.group(2).strip() + "}", s)
-    s = _LIMSUB_RE.sub(
-        lambda m: "\\" + m.group(1).lower() + (("_{" + m.group(2) + "}") if m.group(2) else " "),
-        s,
-    )
-    for _ in range(3):
-        s = _FUNC_RE.sub(lambda m: " \\" + m.group(1).lower() + " ", s)
-        s = re.sub(r"\\backslash\s*([a-zA-Z0-9])", r"\\setminus \1", s)
-        s = re.sub(r"\\backslash\b", r"\\setminus ", s)
-        s = re.sub(r"\\set\s*\\min\s*us\b|\\set\s*minus\b|\\setminus", r"\\setminus ", s)
-        s = re.sub(r"(\\setminus)\s*([a-zA-Z0-9])", r"\1 \2", s)
-
-    # Ensure limit operators (lim, max, min, sup, inf) have \limits before subscript
-    # so KaTeX renders subscript underneath in inline mode.
-    s = re.sub(r"\\(lim|max|min|sup|inf|gcd|det)(?!\s*\\(?:limits|nolimits))\s*_{", r"\\\1\\limits_{", s, flags=re.IGNORECASE)
-
-    # Fix misplaced superscript after limit operator (e.g. \lim\limits_{x\to x_0} ^{+} -> \lim\limits_{x\to x_0^{+}})
-    s = re.sub(
-        r"\\(lim|max|min|sup|inf|gcd|det)(?:\\limits)?\s*_\{(.+?)\}\s*\^\{([\+\-]+)\}",
-        r"\\\1\\limits_{\2^{\3}}",
-        s,
-        flags=re.IGNORECASE,
-    )
-    s = re.sub(
-        r"\\(lim|max|min|sup|inf|gcd|det)(?:\\limits)?\s*\^\{([\+\-]+)\}\s*_\{(.+?)\}",
-        r"\\\1\\limits_{\3^{\2}}",
-        s,
-        flags=re.IGNORECASE,
-    )
-
-    # Clean TCVN3 / MTEF artifacts like § for Đ in subscripts
-    s = s.replace("§", "Đ")
-    s = re.sub(r"\b([yfx])_?\{?\s*([cC])\s*\}?\s*([đĐ])\b", r"\1_{CĐ}", s)
-    s = re.sub(r"\b([yfx])_?\{?\s*([cC])\s*\}?\s*([tT])\b", r"\1_{CT}", s)
-    s = re.sub(r"\b(y|f|x)(ct|CT)\b", r"\1_{CT}", s)
-    s = re.sub(r"\b(y|f|x)(cd|CD|CĐ)\b", r"\1_{CĐ}", s)
-
-    # REMOVED: re.sub(r"(_\{[^{}]+\})}+", r"\1", s)   # y_{CT}} -> y_{CT}
-    #
-    # This stripped a } after any subscript without checking whether an enclosing
-    # group needed it, so it broke every fraction with a subscripted numerator:
-    #     \frac{M_{polymer}}{n}  ->  \frac{M_{polymer}{n}  ->  \frac{M_{polymer}{n}}
-    # These were the last 3 KaTeX failures in production, and they came through the
-    # OMML path (docxast.py:170 runs _tidy on OMML output too), not through MTEF.
-    #
-    # balance_braces() already does this correctly and positionally: in y_{CT}} the
-    # trailing } is a genuine orphan and gets dropped, while in \frac{M_{sub}}{n} it
-    # closes the numerator and is kept. The rule was redundant as well as harmful.
-
-    # Fix MathType misparsed k 360^deg, k 180^deg, k 2pi (e.g. k_{360}^{\circ}, k_{180}^{\circ}, k_{2}\pi)
-    s = re.sub(r"k_\{?(360|180)\}?\^?\{?(?:°|\\circ|0)\}?", r"k \1^{\\circ}", s)
-    s = re.sub(r"k_\{?2\}?\\pi\b", r"k 2\\pi", s)
-    # Fix sd / sđ angle measure function name (e.g. sd(Ou, Ov) -> \text{sd}(Ou, Ov))
-    s = re.sub(r"(?<!\\text\{)\b(sđ|sd)\b(?=\s*\()", r"\\text{\1}", s)
-    # Normalize degree symbol ° to ^{\circ}
-    s = re.sub(r"\^\{?°\}?", r"^{\\circ}", s)
-    s = re.sub(r"(\d+)\s*°", r"\1^{\\circ}", s)
-
-    # Fix MathType misplaced exponent on fraction denominator: \frac{A}{B}^{2} -> \frac{A}{B^{2}}
-    s = re.sub(
-        r"\\frac\{((?:[^{}]|\{[^{}]*\})+)\}\{((?:[^{}]|\{[^{}]*\})+)\}\^\{([^{}]+)\}",
-        r"\\frac{\1}{\2^{\3}}",
-        s,
-    )
-
-    # Wrap subscripts that contain non-ASCII / Vietnamese characters (like CĐ, cđ, ĐD) in \text{...}
-    # Only trigger when the subscript actually contains Unicode chars (U+0080+) — NOT for pure-ASCII like CT, max, min
-    def _sub_repl(m: re.Match) -> str:
-        sub = m.group(1)
-        if sub.startswith(r"\text{"):
-            return m.group(0)
-        return "_{\\text{" + sub + "}}"
-    s = re.sub(r"_\{([^{}]*[\u0080-\uFFFF][^{}]*)\}", _sub_repl, s)
-
-    # Xoá \hat{} và \tilde{} rỗng phát sinh khi ký tự ^ / ~ lạc trong MTEF text không phải superscript
-    s = re.sub(r'\\hat\{\}', '', s)
-    s = re.sub(r'\\tilde\{\}', '', s)
-
-    # Normalize set complement notation Cs S -> C_S S, Cs T -> C_S T, CA B -> C_A B
-    s = re.sub(r"\bC\s*([a-zA-Z0-9])\s*([A-Z0-9])\b", r"C_{\1} \2", s)
-    s = re.sub(r"\bC\s*([a-zA-Z0-9])\s*=\s*", r"C_{\1} = ", s)
-
-    # Clean up orphan bracket suffixes after fences e.g. (-\infty; -2)[) -> (-\infty; -2)
-    #
-    # \} is NOT in the alternation: a trailing \} is far more often the legitimate
-    # closer of a set \{...\} than an artifact, and \{[^}]+\} happily matches the
-    # argument of any macro. That made this rule delete the set closer:
-    #     \{k\pi \mid k \in \mathbb{Z}\}  ->  \{k\pi \mid k \in \mathbb{Z}
-    # It went unnoticed because the trailing-brace-escape rule above had already
-    # turned \mathbb{Z}\} into \mathbb{Z\}, which no longer matched here — the two
-    # bugs masked each other until the escape rule was made stack-aware.
-    s = re.sub(r"(\([^\)]+\)|\[[^\]]+\]|\{[^\}]+\})\s*(\[\)|\[\]|\(\]|\\\)|\\\])", r"\1", s)
-
-    # Xoá ngoặc rỗng triệt để các loại (kể cả có escape \)
-    s = re.sub(r'\\left\(\s*\\right\)', '', s)
-    s = re.sub(r'\\left\{\s*\\right\}', '', s)
-    s = re.sub(r'\\left\[\s*\\right\]', '', s)
-    s = re.sub(r'\\\{\s*\\\}', '', s)
-    s = re.sub(r'(?<!\\left)\(\s*\)', '', s)
-
-    # Fix k 360^\circ degree formatting (prevent 360 from becoming small subscript text)
-    s = s.replace(r'k^{\circ}_{360}', r'k 360^{\circ}').replace(r'k_{360}^{\circ}', r'k 360^{\circ}')
-
-    # Fix malformed basic trigonometric identities array (f51 - Lesson 1)
-    if 'sin ^{2' in s and 'c o s ^{2' in s:
-        s = r"\begin{array}{l}\sin^2 \alpha + \cos^2 \alpha = 1 \\ 1 + \tan^2 \alpha = \frac{1}{\cos^2 \alpha} \left(\alpha \ne \frac{\pi}{2} + k\pi, k \in \mathbb{Z}\right) \\ 1 + \cot^2 \alpha = \frac{1}{\sin^2 \alpha} \left(\alpha \ne k\pi, k \in \mathbb{Z}\right) \\ \tan \alpha \cdot \cot \alpha = 1 \left(\alpha \ne \frac{k\pi}{2}, k \in \mathbb{Z}\right)\end{array}"
-
-    # Fix malformed trigonometric formulas in Lesson 2 (f1, f2, f3, f4)
-    if 'cos (a - b)' in s and ('tan (a - b)' in s or 'tan (a + b)' in s):
-        s = r"\begin{array}{l}\cos(a - b) = \cos a \cos b + \sin a \sin b \\ \cos(a + b) = \cos a \cos b - \sin a \sin b \\ \sin(a - b) = \sin a \cos b - \cos a \sin b \\ \sin(a + b) = \sin a \cos b + \cos a \sin b \\ \tan(a - b) = \frac{\tan a - \tan b}{1 + \tan a \tan b} \\ \tan(a + b) = \frac{\tan a + \tan b}{1 - \tan a \tan b}\end{array}"
-    elif 'sin 2a' in s and ('cos2a' in s or 'c o s ^{2 a' in s or 't a n 2 a' in s):
-        s = r"\begin{array}{l}\sin 2a = 2 \sin a \cos a \\ \cos 2a = \cos^2 a - \sin^2 a = 2 \cos^2 a - 1 = 1 - 2 \sin^2 a \\ \tan 2a = \frac{2 \tan a}{1 - \tan^2 a}\end{array}"
-    elif 'cos a \\cos b=' in s or ('cos a \\cos b' in s and 'sin a \\sin b' in s and '[' in s):
-        s = r"\begin{array}{l}\cos a \cos b = \frac{1}{2} \left[ \cos(a - b) + \cos(a + b) \right] \\ \sin a \sin b = \frac{1}{2} \left[ \cos(a - b) - \cos(a + b) \right] \\ \sin a \cos b = \frac{1}{2} \left[ \sin(a - b) + \sin(a + b) \right]\end{array}"
-    elif 'sin u+ \\sin v=' in s or ('sin u+ \\sin v' in s and 'cos u+ \\cos v' in s):
-        s = r"\begin{array}{l}\cos u + \cos v = 2 \cos \frac{u + v}{2} \cos \frac{u - v}{2} \\ \cos u - \cos v = -2 \sin \frac{u + v}{2} \sin \frac{u - v}{2} \\ \sin u + \sin v = 2 \sin \frac{u + v}{2} \cos \frac{u - v}{2} \\ \sin u - \sin v = 2 \cos \frac{u + v}{2} \sin \frac{u - v}{2}\end{array}"
-
-    # Fix x_1, x_2, ..., x_n nested subscripting (f16 in Math 12 Lesson 2)
-    if 'x_{1 ;x_{2}' in s or 'x_{1;x_{2}' in s or 'x_{1 ; x_{2}' in s:
-        s = r"x_1; x_2; \dots; x_n"
-
-    # Fix f(a); f(x_1); f(x_2); ...; f(x_n); f(b) nested parens (f18 in Math 12 Lesson 2)
-    if 'f(a)' in s and ('f(x' in s or 'f (x' in s):
-        s = r"f(a); f(x_1); f(x_2); \dots; f(x_n); f(b)"
-
-    # Fix MTEF operator decoding corruptions: \lim\limits_{m a x} -> \max, \lim\limits_{m i n} -> \min, \lim\limits_{l i m} -> \lim\limits_{...}
-    if r'\lim\limits_' in s or r'\mathop{\min}' in s or r'\mathop{\max}' in s or r'\max_' in s or r'\min_' in s:
-        s = s.replace(r'\lim\limits_{m a x}', r'\max_').replace(r'\lim\limits_{m i n}', r'\min_')
-        s = s.replace(r'\lim\limits_{M a x}', r'\max_').replace(r'\lim\limits_{M i n}', r'\min_')
-        s = s.replace(r'\lim\limits_{M a x y}', r'\max_{y}').replace(r'\lim\limits_{m i n y}', r'\min_{y}')
-        s = s.replace(r'\lim\limits_{m a x y}', r'\max_{y}').replace(r'\lim\limits_{M i n y}', r'\min_{y}')
-        s = s.replace(r'\lim\limits_{Max}', r'\max_').replace(r'\lim\limits_{Min}', r'\min_')
-        s = s.replace(r'\lim\limits_{max}', r'\max_').replace(r'\lim\limits_{min}', r'\min_')
-        s = s.replace(r'\mathop{\min}', r'\min').replace(r'\mathop{\max}', r'\max')
-
-        # Clean garbage \lim\limits_{l i m} or \lim\limits_{lim}
-        s = s.replace(r'\lim\limits_{l i m}', r'\lim\limits_').replace(r'\lim\limits_{lim}', r'\lim\limits_')
-        s = s.replace(r'\lim\limits_{ l i m}', r'\lim\limits_').replace(r'\lim\limits_{ l i m }', r'\lim\limits_')
-        s = s.replace(r'\lim\limits_{ \lim', r'\lim\limits_{')
-
-        # Fix \lim\limits_ x \to CONDITION -> \lim\limits_{x \to CONDITION}
-        lim_pat = re.escape(r'\lim\limits_') + r'\s*x\s*' + re.escape(r'\to') + r'\s*(.*?)(?=\s*f\s*\(|\s*y\s*=|\s*\[|\s*' + re.escape(r'\frac') + r'|\s*' + re.escape(r'\Rightarrow') + r'|\s*[,;\.]|$)'
-        def _repl_lim(m):
-            cond = m.group(1).strip()
-            if cond.endswith(r'\left('):
-                cond = cond[:-6].strip()
-            return r'\lim\limits_{x \to ' + cond + '} '
-        s = re.sub(lim_pat, _repl_lim, s)
-
-        # Fix MTEF f15 exponent corruption: \frac{a x ^{2 + b x + c} p x + q}{} -> \frac{ax^2 + bx + c}{px + q}
-        s = s.replace(r'\frac{a x ^{2 + b x + c} p x + q}{}', r'\frac{ax^2 + bx + c}{px + q}')
-        s = s.replace(r'\frac{a x^{2 + b x + c} p x + q}{}', r'\frac{ax^2 + bx + c}{px + q}')
-        s = s.replace(r'\frac{ax^{2 + bx + c} px + q}{}', r'\frac{ax^2 + bx + c}{px + q}')
-
-        # Fix empty fraction denominator corruptions:
-        def _strip_trailing_empty_brace(txt):
-            res = []
-            i = 0
-            while i < len(txt):
-                if txt[i:i+6] == r'\frac{':
-                    start_num = i + 6
-                    depth = 1
-                    j = start_num
-                    while j < len(txt) and depth > 0:
-                        if txt[j] == '{': depth += 1
-                        elif txt[j] == '}': depth -= 1
-                        j += 1
-                    if depth == 0 and j < len(txt) and txt[j] == '{':
-                        start_den = j + 1
-                        depth = 1
-                        k = start_den
-                        while k < len(txt) and depth > 0:
-                            if txt[k] == '{': depth += 1
-                            elif txt[k] == '}': depth -= 1
-                            k += 1
-                        if depth == 0 and k > start_den: # non-empty denominator
-                            if txt[k:k+2] == '{}':
-                                res.append(txt[i:k])
-                                i = k + 2
-                                continue
-                res.append(txt[i])
-                i += 1
-            return ''.join(res)
-
-        s = _strip_trailing_empty_brace(s)
-        s = s.replace(r'\frac{f (x) }{}x', r'\frac{f(x)}{x}').replace(r'\frac{f(x)}{}x', r'\frac{f(x)}{x}')
-        s = s.replace(r'\frac{f (x)}{}x', r'\frac{f(x)}{x}').replace(r'\frac{f(x) }{}x', r'\frac{f(x)}{x}')
-        s = re.sub(r'\\frac\{([^{}]+)\}\{\}\s*x\b', r'\\frac{\1}{x}', s)
-        
-        # Fix MTEF f15/f23/f3/f26/f27 exponent corruptions in polynomials & rational functions
-        def _repl_cubic(m):
-            prefix = m.group(1).strip()
-            var = m.group(2)
-            quad_coeff = m.group(3).strip()
-            rest = m.group(5).strip()
-            while rest.endswith('}'):
-                rest = rest[:-1].strip()
-            return f'{prefix}{var}^3 {quad_coeff} {var}^2 {rest}'
-
-        s = re.sub(
-            r'([a-zA-Z0-9\=\(\)\s]*?)([xXyYzZ])\s*\^\s*\{\s*3\s*([\+\-][^\}]+?)\s*([xXyYzZ])\s*\^\s*\{\s*2\s*(.+)',
-            _repl_cubic,
-            s
-        )
-
-        def _repl_quartic(m):
-            prefix = m.group(1).strip()
-            var = m.group(2)
-            quad_coeff = m.group(3).strip()
-            rest = m.group(5).strip()
-            while rest.endswith('}'):
-                rest = rest[:-1].strip()
-            return f'{prefix}{var}^4 {quad_coeff} {var}^2 {rest}'
-
-        s = re.sub(
-            r'([a-zA-Z0-9\=\(\)\s]*?)([xXyYzZ])\s*\^\s*\{\s*4\s*([\+\-][^\}]+?)\s*([xXyYzZ])\s*\^\s*\{\s*2\s*(.+)',
-            _repl_quartic,
-            s
-        )
-
-        def _repl_frac(m):
-            eq_prefix = m.group(1) or ''
-            num_prefix = m.group(2).strip()
-            var = m.group(3)
-            num_exp = m.group(4).strip()
-            den = m.group(5).strip()
-            return f'{eq_prefix}\\frac{{{num_prefix}{var}^2 {num_exp}}}{{{den}}}'
-
-        s = re.sub(
-            r'([a-zA-Z0-9\=\s]*?)\\frac\{\s*(.*?)([xXyYzZ])\s*\^\s*\{\s*2\s*([\+\-][^\}]+?)\}\s*(.*?)\}\{\}',
-            _repl_frac,
-            s
-        )
-
-        s = re.sub(
-            r'x\s*\^\s*\{\s*2\s*\+\s*2\s*a\s*n\s*\.\s*x\s*\+\s*b\s*n\s*-\s*m\s*c\s*\}',
-            lambda m: r'x^2 + 2an \cdot x + bn - mc',
-            s
-        )
-
-        s = re.sub(
-            r'x\s*\^\s*\{\s*2\s*\+\s*2\s*b\s*x\s*\+\s*c(\s*\=\s*0)?\s*\}',
-            lambda m: 'x^2 + 2bx + c' + (m.group(1) or ''),
-            s
-        )
-
-        s = re.sub(r'(\d+)\s*\.\}', r'\1}', s)
-
-        # \frac{NUM DEN}{} -> \frac{NUM}{DEN} e.g. \frac{x ^{2 + 2 x - 1} 2 x - 1}{} -> \frac{x^{2+2x-1}}{2x-1}
-        pat_empty_den = re.escape(r'\frac{') + r'([^\}]*\}[^\}]*)\}\{\}'
-        def _repl_empty_den(m):
-            content = m.group(1)
-            last_brace = content.rfind('}')
-            if last_brace != -1:
-                num = content[:last_brace+1].strip()
-                den = content[last_brace+1:].strip()
-                if num and den:
-                    return r'\frac{' + num + '}{' + den + '}'
-            return m.group(0)
-        s = re.sub(pat_empty_den, _repl_empty_den, s)
-
-        # Fix orphan bracket suffix corruption: [f (x) ]-(a x + b) -> [f(x) - (ax + b)], [f (x) ]-ax -> [f(x) - ax]
-        s = s.replace(r'-ax[]', r'-ax').replace(r'- ax[]', r'-ax')
-        s = re.sub(r'\[\s*f\s*\(\s*x\s*\)\s*\]\s*-\s*(\(?[^=\];,]+\)?|\w+)', r'[f(x) - \1]', s)
-        s = s.replace(r'(a x + b)', r'(ax + b)').replace(r'a x', r'ax')
-
-        s = s.replace(r'\max_x\in D', r'\max_{x \in D}').replace(r'\min_x\in D', r'\min_{x \in D}')
-        s = s.replace(r'\max_x \in D', r'\max_{x \in D}').replace(r'\min_x \in D', r'\min_{x \in D}')
-        s = s.replace(r'\max_D', r'\max_{D}').replace(r'\min_D', r'\min_{D}')
-        s = s.replace(r'\max_ D', r'\max_{D}').replace(r'\min_ D', r'\min_{D}')
-        s = s.replace(r'\max_ [a ; b]', r'\max\limits_{[a; b]}').replace(r'\min_ [a ; b]', r'\min\limits_{[a; b]}')
-        s = s.replace(r'\max_[a ; b]', r'\max\limits_{[a; b]}').replace(r'\min_[a ; b]', r'\min\limits_{[a; b]}')
-        s = s.replace(r'\max_ [a; b]', r'\max\limits_{[a; b]}').replace(r'\min_ [a; b]', r'\min\limits_{[a; b]}')
-        s = s.replace(r'\max_[a; b]', r'\max\limits_{[a; b]}').replace(r'\min_[a; b]', r'\min\limits_{[a; b]}')
-
-        for op in [r'\max_', r'\min_']:
-            while op + '[' in s or op + ' [' in s:
-                idx = s.find(op + '[') if op + '[' in s else s.find(op + ' [')
-                bracket_start = s.find('[', idx)
-                bracket_end = s.find(']', bracket_start)
-                if bracket_start != -1 and bracket_end != -1:
-                    target = s[idx : bracket_end + 1]
-                    domain = s[bracket_start : bracket_end + 1]
-                    op_name = r'\max' if 'max' in op else r'\min'
-                    s = s.replace(target, f'{op_name}_{{{domain}}}')
-                else:
-                    break
-            while op + '(' in s or op + ' (' in s:
-                idx = s.find(op + '(') if op + '(' in s else s.find(op + ' (')
-                paren_start = s.find('(', idx)
-                paren_end = s.find(')', paren_start)
-                if paren_start != -1 and paren_end != -1:
-                    target = s[idx : paren_end + 1]
-                    domain = s[paren_start : paren_end + 1]
-                    op_name = r'\max' if 'max' in op else r'\min'
-                    s = s.replace(target, f'{op_name}_{{{domain}}}')
-                else:
-                    break
-
-
-    # Fix unescaped closing set brace e.g. \{k\pi \mid k \in \mathbb{Z}} -> \{k\pi \mid k \in \mathbb{Z}\}
-    # Same guard as above: the trailing } must be orphaned, not the closer of a group.
-    if s.count(r"\{") > s.count(r"\}") and trailing_close_is_orphan(s):
-        s = s.strip()[:-1] + r"\}"
-
-    # Strip extra trailing braces after \right.
-    s = re.sub(r'\\right\.\s*\\?\}+\s*$', r'\\right.}', s)
-    s = re.sub(r'\\right\.\s*\\?\}+\s*\}', r'\\right.}', s)
-    s = re.sub(r'(\\right\s*\.)\s*\\?\}*\s*$', r'\1', s)
-    s = re.sub(r'(\\right\s*\.)\s*\\?\}*\s*(\\right\s*\.)', r'\1', s)
-    s = re.sub(r'\\+$', '', s.strip())
-
-
-    # Balance braces with a STACK, not by counting totals and trimming the tail.
-    # Counting totals cannot tell WHERE the imbalance is, so trimming from the end
-    # deletes the legitimate closing brace of a \frac when the stray } sits in the
-    # middle: \frac{1}{cos} -> \frac{1{cos}. See pipeline/latex_balance.py.
-    s, _brace_notes = balance_braces(s)
-
-    # Balance unclosed \left fences with \right. if \left count > \right count
-    n_left = len(re.findall(r'\\left\b', s))
-    n_right = len(re.findall(r'\\right\b', s))
-    if n_left > n_right:
-        needed = r' \right.' * (n_left - n_right)
-        if s.endswith('}'):
-            s = s[:-1].strip() + needed + ' }'
-        else:
-            s += needed
-
-    # Ensure space after \right. before trailing } (KaTeX requires delimiter space before group brace)
-    s = re.sub(r'\\right\.\s*\}', r'\\right. }', s)
-
-    # Fix \end{array\} -> \end{array} AFTER trailing brace logic
-    s = re.sub(r'\\end\{array\\?\}?\}?', r'\\end{array}', s)
-
-    # Strip any trailing backslashes
-    s = re.sub(r'\\+$', '', s.strip())
-
+    # RAW MODE: Turn off _tidy, exp_repair, balance_braces
     return " ".join(s.split()).strip()
+
 
 
 
@@ -1415,11 +975,7 @@ def _load_overrides():
 
 
 def decode_ole(blob: bytes) -> tuple[str | None, str]:
-    if blob:
-        h = hashlib.sha1(blob).hexdigest()
-        overrides = _load_overrides()
-        if h in overrides:
-            return overrides[h].get("latex"), "override"
+    # RAW MODE: Disabled overrides.json lookup
     try:
         if not olefile.isOleFile(io.BytesIO(blob)):
             return None, "unresolved"
@@ -1429,4 +985,5 @@ def decode_ole(blob: bytes) -> tuple[str | None, str]:
         return decode_stream(ole.openstream("Equation Native").read())
     except Exception:
         return None, "unresolved"
+
 

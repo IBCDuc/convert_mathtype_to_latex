@@ -45,46 +45,9 @@ _NEQ_RE = re.compile(r"\\not\s*=|\\cancel\s*\{\s*=\s*\}|≠|[\u0338]=|=[\u0338]|
 
 
 def _wrap_bare_words(tex: str) -> str:
-    tex = unicodedata.normalize("NFC", tex)
-    tex = _NEQ_RE.sub(r" \\ne ", tex)
-    tex = re.sub(r"[\uE000-\uF8FF]", "", tex)
-    # Fix manual backslash set difference (e.g. S\T, A\B -> S \setminus T) causing red KaTeX error
-    tex = re.sub(r"\\([A-Za-z])(?![a-zA-Z])", r" \\setminus \1", tex)
-    # Clean TCVN3 / MTEF artifacts like § for Đ
-    tex = tex.replace("§", "Đ")
-    # Convert bare subscript patterns: x0 -> x_0, y0 -> y_0, A1 -> A_1, fct -> f_{CT}, ycd -> y_{CĐ}
-    def _subscript_repl(m):
-        var, num = m.group(1), m.group(2)
-        if var in ('k', 'K') and num in ('360', '180', '720', '90', '2'):
-            return m.group(0)
-        return f"{var}_{{{num}}}"
-    tex = re.sub(r"(?<!\\)\b([a-zA-Z])([0-9]+)\b", _subscript_repl, tex)
-    tex = re.sub(r"(?<![\\a-zA-Z])(y|f|x)(ct|CT)\b", r"\1_{CT}", tex)
-    tex = re.sub(r"(?<![\\a-zA-Z])(y|f|x)(cd|CD|CĐ)\b", r"\1_{CĐ}", tex)
-    # Fix setminus corruptions like \set \min us, \set minus, \setminus
-    tex = re.sub(r"\\set\s*\\min\s*us\b|\\set\s*minus\b", r" \\setminus ", tex)
-    # Clean ray / vector notation like \mathrm{Om}, \mathrm{Ou}, \mathrm{Ov} -> Om, Ou, Ov
-    tex = re.sub(r"\\mathrm\{O([uvmxyz])\}", r"O\1", tex)
-    tex = re.sub(r"\\mathrm\{O\}\s*([uvmxyz])", r"O\1", tex)
-    tex = re.sub(r"\bO\s+([uvmxyz])\b", r"O\1", tex)
-    # Upgrade \frac to \dfrac for balanced fraction rendering
-    tex = re.sub(r"(?<!\\)\bfrac\b", "dfrac", tex)
-    # Force subscript of lim/max/min/sup/inf to appear BELOW the operator (not to the side)
-    # even in inline math mode. \limits modifier achieves this in KaTeX.
-    # Pattern: \lim_ or \max_ etc. (without \limits already present)
-    tex = re.sub(r"\\(lim|max|min|sup|inf|limsup|liminf)(?!\\limits)\s*_",
-                 r"\\\1\\limits_", tex)
-    # Fix misplaced superscripts after limit subscripts (e.g. \lim\limits_{x\to x_0} ^{+} -> \lim\limits_{x\to x_0^{+}})
-    tex = re.sub(r"\\(lim|max|min|sup|inf)(?:\\limits)?\s*_\{(.+?)\}\s*\^\{([\+\-]+)\}",
-                 r"\\\1\\limits_{\2^{\3}}", tex, flags=re.IGNORECASE)
-    tex = re.sub(r"\\(lim|max|min|sup|inf)(?:\\limits)?\s*\^\{([\+\-]+)\}\s*_\{(.+?)\}",
-                 r"\\\1\\limits_{\3^{\2}}", tex, flags=re.IGNORECASE)
-    def repl(m):
-        w = m.group(1)
-        if _VIET_DIACRITICS.search(w) or w.lower() in _VIET_WORDS_ASCII:
-            return r"\text{ %s }" % w
-        return w
-    return _VIET_WORD_RE.sub(repl, tex)
+    # RAW MODE: Disabled _wrap_bare_words
+    return tex
+
 
 
 def clear_cache():
