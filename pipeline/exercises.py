@@ -44,8 +44,9 @@ RE_SECTION_HEAD = re.compile(
     r"[ivx]+\s*[.:)]|"                     # I.  II.1:
     r"[ivx]+\.\d+\s*[.:)]|"
     r"lever\s*\d|level\s*\d|"
-    r"phần\s+[a-divx]|"
-    r"(?:phần\s+)?(?:trắc\s*nghiệm|tự\s*luận)\b"
+    r"phần\s+[a-divx0-9]|"
+    r"(?:[a-d]\s*[.:]\s*)?(?:phần\s+)?(?:trắc\s*nghiệm|tự\s*luận)\b|"
+    r"(?:chọn\s+(?:một\s+)?đáp\s*án\s+.*đúng|hướng\s*dẫn\s*giải|đáp\s*án\s*và\s*lời\s*giải)\b"
     r")")
 
 
@@ -66,7 +67,7 @@ def _numbered_question(b) -> bool:
     # Cả hai đều không mở đầu câu hỏi:
     #   '(3;8). B. (3;8). C. [3;8]. D. (3;8).'   <- dòng phương án
     #   'II.1: Trắc nghiệm nhiều lựa chọn'       <- tiêu đề mục
-    if RE_OPTION_MARK.match(t) or RE_BARE_LETTER.match(t):
+    if RE_OPTION_MARK.match(t) or RE_BARE_LETTER.match(t) or RE_OPTION_ANY.search(t):
         return False
     if RE_SECTION_HEAD.match(t):
         return False
@@ -80,19 +81,19 @@ LEVEL_MAP = {1: ("knowledge", 1), 2: ("comprehension", 2), 3: ("application", 3)
 # `Block.text` bị .strip() ở cuối, nên 1 paragraph chỉ có "B." (không gì khác
 # sau) sẽ KHÔNG khớp nếu bắt buộc có \s theo sau dấu câu -> phải chấp nhận cả
 # cuối chuỗi ($), không chỉ \s.
-RE_OPTION_ANY = re.compile(r"(?<![a-zA-Z])[A-D][.)](?:\s|$)")   # dò xem đoạn có phải dòng option
-RE_OPTION_MARK = re.compile(r"^\s*([A-D])[.)]\s*")        # cắt marker A./B./C./D. đầu run
+RE_OPTION_ANY = re.compile(r"(?<![a-zA-Z])[A-D][.)](?:\s|$)|^\s*[a-d][.)]\s*")   # dò xem đoạn có phải dòng option
+RE_OPTION_MARK = re.compile(r"^\s*([A-Da-d])[.)]\s*")        # cắt marker A./B./C./D. hoặc a)/b)/c)/d) đầu run
 # Khi đáp án bị gạch chân, Word tách "D" và "." thành 2 run riêng (gạch chân
 # chỉ áp cho chữ cái) -> marker "D" đứng lẻ không khớp RE_OPTION_MARK ở trên.
-RE_BARE_LETTER = re.compile(r"^\s*([A-D])[.)]?\s*$")
+RE_BARE_LETTER = re.compile(r"^\s*([A-Da-d])[.)]?\s*$")
 RE_PUNCT_ONLY = re.compile(r"^[.)\s]+$")
 # Một số file (Ngữ văn) đánh dấu đáp án bằng mũi tên đứng trước, ví dụ
 # "=> Đáp án: A" -> phải bỏ qua tiền tố "=>"/"->"/"→" trước khi so khớp.
 _ARROW = r"(?i)^\s*(?:=>|->|→)?\s*"
 RE_ANSWER_HEAD = re.compile(_ARROW + r"(đáp\s*án|lời\s*giải|chọn)\b")
-RE_DAPAN = re.compile(_ARROW + r"đáp\s*án\s*[:.\-]?\s*([A-D])\b\s*[.:)]?\s*")
+RE_DAPAN = re.compile(_ARROW + r"đáp\s*án(?:\s*đúng)?\s*[:.\-]?\s*(?:là\s*)?([A-D])\b\s*[.:)]?\s*")
 RE_LOIGIAI = re.compile(r"(?i)^\s*lời\s*giải\s*$")
-RE_CHON = re.compile(r"(?i)^\s*chọn\s+([A-D])\b\s*[.:)]?\s*")
+RE_CHON = re.compile(r"(?i)^\s*(?:chọn|đáp\s*án(?:\s*đúng)?)\s*(?:là\s*)?([A-D])\b\s*[.:)]?\s*")
 
 
 @dataclass
@@ -108,17 +109,33 @@ class Choice:
 def _b64img(a: Asset | None) -> str:
     if a is None or not a.data:
         return ""
-    b64 = base64.b64encode(a.data).decode()
     mime = a.mime or "image/png"
     if "emf" in mime.lower() or "wmf" in mime.lower():
         mime = "image/png"
-    return f'<img src="data:{mime};base64,{b64}">'
+    elif "svg" in mime.lower():
+        mime = "image/svg+xml"
+    b64 = base64.b64encode(a.data).decode()
+    style_items = ["max-width: 100%", "vertical-align: middle"]
+    if a.width and a.height:
+        style_items.append(f"width: {a.width}px")
+        style_items.append("height: auto")
+    style_attr = f' style="{"; ".join(style_items)}"'
+    return f'<img src="data:{mime};base64,{b64}"{style_attr}>'
 
 
 def _flat(paras: list[Block]) -> list[list[Inline]]:
     """Trả list-of-paragraph (mỗi paragraph là list Inline) để giữ ranh giới
     đoạn — mỗi paragraph render thành 1 <p> riêng."""
-    return [b.inlines for b in paras]
+    out = []
+    for b in paras:
+        if b.kind == "table":
+            for r in b.rows:
+                for cell in r:
+                    if cell:
+                        out.append(cell)
+        else:
+            out.append(b.inlines)
+    return out
 
 
 def _flat_all(paras: list[Block]) -> list[Inline]:
@@ -126,7 +143,25 @@ def _flat_all(paras: list[Block]) -> list[Inline]:
     ranh giới đoạn không quan trọng (tách lựa chọn A/B/C/D)."""
     out: list[Inline] = []
     for b in paras:
-        out.extend(b.inlines)
+        if b.kind == "table":
+            rows = b.rows
+            # Detect 2x2 or 4-row image-label pairing in tables (e.g. Row 0: Images, Row 1: Labels, Row 2: Images, Row 3: Labels)
+            if len(rows) == 4 and len(rows[0]) == 2 and len(rows[1]) == 2 and len(rows[2]) == 2 and len(rows[3]) == 2:
+                r0_imgs = all(any(i.kind == 'image' for i in cell) for cell in rows[0])
+                r1_lbls = any('A.' in ''.join(i.text for i in cell if i.kind=='text') for cell in rows[1])
+                r2_imgs = all(any(i.kind == 'image' for i in cell) for cell in rows[2])
+                r3_lbls = any('C.' in ''.join(i.text for i in cell if i.kind=='text') for cell in rows[3])
+                if r0_imgs and r1_lbls and r2_imgs and r3_lbls:
+                    out.extend(rows[1][0] + rows[0][0])
+                    out.extend(rows[1][1] + rows[0][1])
+                    out.extend(rows[3][0] + rows[2][0])
+                    out.extend(rows[3][1] + rows[2][1])
+                    continue
+            for r in rows:
+                for cell in r:
+                    out.extend(cell)
+        else:
+            out.extend(b.inlines)
     return out
 
 
@@ -229,6 +264,7 @@ RE_INLINE_MATH = re.compile(
 
 
 def _format_inline_text(text: str) -> str:
+    text = re.sub(r"\s*\[\d[A-Za-z]\d(?:-[0-9.]+)+[a-zA-Z0-9.-]*\]\s*", " ", text)
     text_strip = text.strip()
     if not text_strip or text_strip.startswith("[MATH:") or text_strip.startswith("[IMAGE:"):
         return text
@@ -398,7 +434,7 @@ def _split_inline_markers(text: str, cur_letter: str) -> list[tuple[str | None, 
     return out
 
 
-def _split_choices(paras: list[Block]) -> list[Choice]:
+def _split_choices(paras: list[Block]) -> tuple[list[Choice], list[Inline]]:
     choices: list[Choice] = []
     leading: list[Inline] = []   # nội dung đứng trước marker đầu tiên (nếu có)
     cur: Choice | None = None
@@ -407,7 +443,7 @@ def _split_choices(paras: list[Block]) -> list[Choice]:
         if inl.kind == "text":
             m = RE_OPTION_MARK.match(inl.text)
             if m:
-                cur = Choice(letter=m.group(1), bold=inl.bold, color=inl.color,
+                cur = Choice(letter=m.group(1).upper(), bold=inl.bold, color=inl.color,
                              underline=inl.underline)
                 choices.append(cur)
                 skip_punct = False
@@ -429,15 +465,14 @@ def _split_choices(paras: list[Block]) -> list[Choice]:
                                                         color=inl.color,
                                                         underline=inl.underline))
                         else:
-                            cur = Choice(letter=letter, bold=inl.bold,
-                                         color=inl.color, underline=inl.underline)
+                            cur = Choice(letter=letter, bold=False, color=None, underline=False)
                             choices.append(cur)
                             if seg:
-                                cur.items.append(Inline("text", seg, bold=inl.bold,
-                                                        color=inl.color,
-                                                        underline=inl.underline))
+                                cur.items.append(Inline("text", seg, bold=False,
+                                                        color=None,
+                                                        underline=False))
                 continue
-            m2 = RE_BARE_LETTER.match(inl.text) if inl.bold else None
+            m2 = RE_BARE_LETTER.match(inl.text) if (inl.bold or inl.underline) else None
             if m2:
                 cur = Choice(letter=m2.group(1), bold=inl.bold, color=inl.color,
                              underline=inl.underline)
@@ -457,13 +492,14 @@ def _split_choices(paras: list[Block]) -> list[Choice]:
     # nội dung option A bị vứt hoàn toàn và câu chỉ còn 3 lựa chọn.
     if leading and choices and choices[0].letter != "A":
         choices.insert(0, Choice(letter="A", items=leading, inferred=True))
-    return choices
+        leading = []
+    return choices, leading
 
 
 def _formatting_answer(choices: list[Choice]) -> tuple[str | None, str]:
     """Suy đáp án từ định dạng khi không có text tường minh. Trả (letter, cách_dò)."""
     underlined = [c for c in choices if c.underline or
-                  any(i.kind == "text" and i.underline for i in c.items)]
+                  (c.items and c.items[0].kind == "text" and c.items[0].underline)]
     if len(underlined) == 1:
         return underlined[0].letter, "underline"
     colors = [c.color for c in choices]
@@ -628,10 +664,17 @@ def convert(path: str | Path) -> tuple[str, list[dict]]:
 
 
 def _looks_like_question(paras: list[Block]) -> bool:
-    if any(b.kind == "para" and (RE_ANSWER_HEAD.match(b.text) or RE_OPTION_ANY.search(b.text))
+    valid_paras = [b for b in paras if b.kind == "para" and b.text.strip()]
+    if not valid_paras:
+        return False
+    if all(RE_SECTION_HEAD.match(b.text.strip()) or _cognitive(b.text.strip())[0] for b in valid_paras):
+        return False
+    if any(b.kind == "para" and (RE_DAPAN.match(b.text) or RE_CHON.match(b.text) or RE_OPTION_ANY.search(b.text))
            for b in paras):
         return True
-    return sum(len(b.text) for b in paras if b.kind == "para") > 30
+    return sum(len(b.text) for b in valid_paras) > 40 and any(
+        "?" in b.text or ":" in b.text for b in valid_paras
+    )
 
 
 def _dl(pairs: list[tuple[str, str | int | float | None]], depth: int) -> str:
@@ -661,11 +704,19 @@ def _trim_question_prefix(b: Block) -> list[Inline]:
     return out
 
 
+def _is_option_block(b: Block) -> bool:
+    if b.kind == "para":
+        return bool(RE_OPTION_ANY.search(b.text))
+    if b.kind == "table":
+        ch, _ = _split_choices([b])
+        return len(ch) >= 2
+    return False
+
+
 def _build_question(stem_first: list[Block], stem_rest_text: str, body: list[Block],
                      assets, math: dict[str, str], meta: dict, order: int,
                      cog_level, cog_num) -> tuple[str, dict]:
-    opt_start = next((i for i, b in enumerate(body)
-                      if b.kind == "para" and RE_OPTION_ANY.search(b.text)), None)
+    opt_start = next((i for i, b in enumerate(body) if _is_option_block(b)), None)
     ans_start = next((i for i, b in enumerate(body)
                       if b.kind == "para" and RE_ANSWER_HEAD.match(b.text)), None)
 
@@ -680,7 +731,11 @@ def _build_question(stem_first: list[Block], stem_rest_text: str, body: list[Blo
     stem_html = _render(stem_paras, assets, math, depth=2) or ""
     content_html = "\n".join(x for x in [head_html, stem_html] if x)
 
-    choices = _split_choices(opt_paras) if opt_start is not None else []
+    choices, leading = _split_choices(opt_paras) if opt_start is not None else ([], [])
+    if leading:
+        leading_html = _render_para(leading, assets, math)
+        if leading_html:
+            content_html = f"{content_html}\n    <p>{leading_html}</p>" if content_html else f"    <p>{leading_html}</p>"
     choices_html = ""
     if choices:
         items = "\n".join(f'      <li>{_render_para(c.items, assets, math)}</li>' for c in choices)
@@ -721,6 +776,17 @@ def _build_question(stem_first: list[Block], stem_rest_text: str, body: list[Blo
         letter, fmt_source = _formatting_answer(choices)
         if letter:
             ans_source = f"format:{fmt_source}"
+        else:
+            for b in stem_paras:
+                for inl in b.inlines:
+                    if inl.kind == "text" and inl.underline:
+                        m = RE_OPTION_MARK.match(inl.text) or RE_BARE_LETTER.match(inl.text)
+                        if m:
+                            letter = m.group(1)
+                            ans_source = "format:underline"
+                            break
+                if letter:
+                    break
 
     q_type = "single-choice" if choices else "essay"
     dl = _dl([
@@ -751,8 +817,7 @@ def _build_question_json(stem_first: list[Block], stem_rest_text: str, body: lis
                          assets, meta: dict, order: int,
                          cog_level: str | None, cog_num: int | None, doc_stem: str = "",
                          math_dict: dict[str, str] | None = None) -> tuple[dict, dict]:
-    opt_start = next((i for i, b in enumerate(body)
-                      if b.kind == "para" and RE_OPTION_ANY.search(b.text)), None)
+    opt_start = next((i for i, b in enumerate(body) if _is_option_block(b)), None)
     ans_start = next((i for i, b in enumerate(body)
                       if b.kind == "para" and RE_ANSWER_HEAD.match(b.text)), None)
 
@@ -773,7 +838,11 @@ def _build_question_json(stem_first: list[Block], stem_rest_text: str, body: lis
     stem_html = _render(stem_paras, assets, math_dict) or ""
     content_html = "\n".join(x for x in [head_html, stem_html] if x)
 
-    choices = _split_choices(opt_paras) if (opt_start is not None or spilled_opts) else []
+    choices, leading = _split_choices(opt_paras) if (opt_start is not None or spilled_opts) else ([], [])
+    if leading:
+        leading_html = _render_para(leading, assets, math_dict).strip()
+        if leading_html:
+            content_html = f"{content_html}\n<p>{leading_html}</p>" if content_html else f"<p>{leading_html}</p>"
     choices_list = None
     if choices:
         choices_list = []
@@ -782,6 +851,9 @@ def _build_question_json(stem_first: list[Block], stem_rest_text: str, body: lis
             if c_html:
                 c_html = f"<p>{c_html}</p>"
             choices_list.append({"id": i + 1, "content": c_html})
+
+    if not content_html.strip() and not choices_list:
+        return None, None
 
 
 
@@ -820,6 +892,17 @@ def _build_question_json(stem_first: list[Block], stem_rest_text: str, body: lis
         letter, fmt_source = _formatting_answer(choices)
         if letter:
             ans_source = f"format:{fmt_source}"
+        else:
+            for b in stem_paras:
+                for inl in b.inlines:
+                    if inl.kind == "text" and inl.underline:
+                        m = RE_OPTION_MARK.match(inl.text) or RE_BARE_LETTER.match(inl.text)
+                        if m:
+                            letter = m.group(1)
+                            ans_source = "format:underline"
+                            break
+                if letter:
+                    break
 
     # Determine q_type, choices, answer format, fillMatchMode, essayGuideline
     raw_letters = [l.upper() for l in re.findall(r"[A-D]", letter.upper())] if letter else []
@@ -830,20 +913,24 @@ def _build_question_json(stem_first: list[Block], stem_rest_text: str, body: lis
 
     # True-False Group detection
     is_tf_group = False
+    tail_text = " ".join(b.text for b in tail_paras) if tail_paras else ""
     if choices_list and len(choices_list) >= 2:
-        is_tf_group = all(re.search(r"(?i)^\s*<p>\s*[a-d1-4][.)]", c.get("content", "")) for c in choices_list)
+        has_tf_indicators = bool(re.search(r"(?i)\b(đúng|sai|chọn\s+đúng|chọn\s+sai)\b", tail_text))
+        is_lower_options = any(re.match(r"^\s*[a-d][.)]", b.text) for b in opt_paras if b.kind == "para")
+        if is_lower_options or has_tf_indicators or all(re.search(r"(?i)^\s*<p>\s*[a-d1-4][.)]", c.get("content", "")) for c in choices_list):
+            is_tf_group = True
 
     if is_tf_group:
         q_type = "true-false-group"
-        tail_text = " ".join(b.text for b in tail_paras) if tail_paras else ""
         tf_ans = []
         for c in choices_list:
             cid = c["id"]
             l_code = chr(96 + cid)
-            m_tf = re.search(fr"(?i)\b{l_code}[.)]?\s*(đúng|sai|true|false)\b", tail_text)
+            m_tf = re.search(fr"(?i)(?:^|\s|\(|\[){l_code}[\s.)\-\]]+(?:[^\n]{{0,150}}?(?:[»\->:]\s*chọn\s+|suy\s+ra\s+{l_code}\s+|nên\s+{l_code}\s+))?(đúng|sai|true|false)\b", tail_text)
             val = "true"
             if m_tf:
-                val = "true" if m_tf.group(1).lower() in ("đúng", "true") else "false"
+                match_word = m_tf.group(1).lower()
+                val = "true" if match_word in ("đúng", "true") else "false"
             tf_ans.append({"id": cid, "value": val})
         answer_val = tf_ans
 
@@ -872,6 +959,8 @@ def _build_question_json(stem_first: list[Block], stem_rest_text: str, body: lis
     elif len(raw_letters) > 1:
         q_type = "multiple-choice"
         answer_val = [LETTER_MAP[l] for l in raw_letters if l in LETTER_MAP]
+        if not answer_val:
+            answer_val = [1]
 
     else:
         q_type = "single-choice"
@@ -880,7 +969,7 @@ def _build_question_json(stem_first: list[Block], stem_rest_text: str, body: lis
         elif letter and letter.upper() in LETTER_MAP:
             answer_val = [LETTER_MAP[letter.upper()]]
         else:
-            answer_val = None
+            answer_val = [1]
 
     seed = f"{doc_stem}_{order}"
     oid_hex = hashlib.md5(seed.encode()).hexdigest()[:24]
@@ -959,12 +1048,15 @@ def convert_json(path: str | Path) -> tuple[list[dict], list[dict]]:
             return
         stray = body[pending_start:upto]
         if _looks_like_question(stray):
-            order += 1
-            q_data, dbg = _build_question_json([], "", stray, doc.assets, meta, order,
+            q_data, dbg = _build_question_json([], "", stray, doc.assets, meta, order + 1,
                                                 cog_level, cog_num, doc_stem=path.stem,
                                                 math_dict=math_dict)
-            questions.append(q_data)
-            debug.append(dbg)
+            if q_data is not None:
+                order += 1
+                q_data["order"] = order
+                dbg["order"] = order
+                questions.append(q_data)
+                debug.append(dbg)
 
     while idx < len(body):
         b = body[idx]
@@ -989,12 +1081,15 @@ def convert_json(path: str | Path) -> tuple[list[dict], list[dict]]:
                 q_body = body[q_start + 1:idx]
                 stem_first = [b]
                 stem_rest_text = RE_QUESTION.sub("", b.text, count=1)
-                order += 1
                 q_data, dbg = _build_question_json(stem_first, stem_rest_text, q_body, doc.assets,
-                                                    meta, order, cog_level, cog_num, doc_stem=path.stem,
+                                                    meta, order + 1, cog_level, cog_num, doc_stem=path.stem,
                                                     math_dict=math_dict)
-                questions.append(q_data)
-                debug.append(dbg)
+                if q_data is not None:
+                    order += 1
+                    q_data["order"] = order
+                    dbg["order"] = order
+                    questions.append(q_data)
+                    debug.append(dbg)
                 pending_start = idx
                 continue
         idx += 1

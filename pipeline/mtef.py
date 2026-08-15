@@ -84,6 +84,7 @@ SYMBOLS = {
     0x03C0: r"\pi", 0x03C1: r"\rho", 0x03C3: r"\sigma", 0x03C4: r"\tau",
     0x03C6: r"\varphi", 0x03C9: r"\omega", 0x0394: r"\Delta", 0x03A9: r"\Omega",
     0x2245: r"\cong", 0x223C: r"\sim", 0x2212: r"-", 0x2044: r"/",
+    0x00B0: r"^{\circ}",
 }
 
 # TCVN3 (ABC) byte mapping cho font .VnTime dùng trong MathType
@@ -554,7 +555,14 @@ class MTEFParser:
                 assert head.endswith(r"\end{array}")
                 out[pile_array_idx] = head[: -len(r"\end{array}")] + r"\\" + tail + r"\end{array}"
             del out[pile_array_idx + 1:]
-        return "".join(out)
+        joined = []
+        for piece in out:
+            if not piece:
+                continue
+            if joined and re.search(r"\\[A-Za-z]+$", joined[-1]) and re.match(r"^[A-Za-z]", piece):
+                joined.append(" ")
+            joined.append(piece)
+        return "".join(joined)
 
     def skip_ruler(self) -> None:
         n = self.u8()
@@ -746,23 +754,31 @@ class MTEFParser:
             return ("_{" + v + "}") if v else "", trailing
         if sel == TM_SUP:
             v = next((s for s in slots if s.strip()), "")
+            if v in ("0", "°", "o", "O", "\\circ", "^{\\circ}", "{^{\\circ}}", "{\\circ}"):
+                return "^{\\circ}", trailing
             return ("^{" + v + "}") if v else "", trailing
         if sel == TM_SUBSUP:
             if a in ("360", "180") or (a and "360" in a):
-                if "\\circ" in b or b == "°":
+                if "\\circ" in b or b in ("°", "0", "o", "O", "^{\\circ}"):
                     return f" {a}^{{\\circ}}", trailing
             res = ""
             if a:
                 res += "_{" + a + "}"
             if b:
-                res += "^{" + b + "}"
+                if b in ("0", "°", "o", "O", "\\circ", "^{\\circ}", "{^{\\circ}}", "{\\circ}"):
+                    res += "^{\\circ}"
+                else:
+                    res += "^{" + b + "}"
             return res, trailing
         if sel == TM_SCRIPT:
             r = a
             if b:
                 r += "_" + _brace(b)
             if c:
-                r += "^" + _brace(c)
+                if c in ("0", "°", "o", "O", "\\circ", "^{\\circ}", "{^{\\circ}}", "{\\circ}"):
+                    r += "^{\\circ}"
+                else:
+                    r += "^" + _brace(c)
             return r, trailing
         # Các template trang trí một ô: ô RỖNG thì không sinh macro rỗng.
         # MathType hay để lại TM_OBAR rỗng giữa dòng, sinh ra "\overline{}\to"
@@ -876,6 +892,8 @@ def decode_stream(data: bytes) -> tuple[str | None, str]:
         tail = data.split(TEX_MARK, 1)[1]
         raw = tail.split(b"\x00", 1)[0].decode("latin1", "ignore")
         if raw.strip():
+            raw = re.sub(r"\\begin\{align\*?\}", r"\\begin{aligned}", raw)
+            raw = re.sub(r"\\end\{align\*?\}", r"\\end{aligned}", raw)
             return _tidy(raw), "tex"
     body = data[28:] if len(data) > 28 else b""
     p = MTEFParser(body)

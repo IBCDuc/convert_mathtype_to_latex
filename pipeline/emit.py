@@ -88,11 +88,18 @@ def _pad(depth: int) -> str:
 def _b64img(a: Asset | None) -> str:
     if a is None or not a.data:
         return ""
-    b64 = base64.b64encode(a.data).decode()
     mime = a.mime or "image/png"
     if "emf" in mime.lower() or "wmf" in mime.lower():
         mime = "image/png"
-    return f'<img src="data:{mime};base64,{b64}">'
+    elif "svg" in mime.lower():
+        mime = "image/svg+xml"
+    b64 = base64.b64encode(a.data).decode()
+    style_items = ["max-width: 100%", "vertical-align: middle"]
+    if a.width and a.height:
+        style_items.append(f"width: {a.width}px")
+        style_items.append("height: auto")
+    style_attr = f' style="{"; ".join(style_items)}"'
+    return f'<img src="data:{mime};base64,{b64}"{style_attr}>'
 
 
 def _needs_gap(prev: tuple, cur: tuple) -> bool:
